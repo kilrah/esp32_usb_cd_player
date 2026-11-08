@@ -248,7 +248,7 @@ static void update_cb(lv_timer_t *t)
 
     int ota = ota_progress();
     if (ota >= 0) {
-        snprintf(buf, sizeof(buf), "Firmware update %d%%", ota);
+        snprintf(buf, sizeof(buf), "FW update: %d%%", ota);
         set_text(s_title, buf);
     }
 
