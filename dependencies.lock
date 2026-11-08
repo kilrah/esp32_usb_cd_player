@@ -1,10 +1,4 @@
 dependencies:
-  esp_usb_host_atapi:
-    dependencies: []
-    source:
-      path: components/esp_usb_host_atapi
-      type: local
-    version: 0.1.0
   espressif/cjson:
     component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
     dependencies:
@@ -80,6 +74,22 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.23.1
+  kilrah/esp_usb_host_atapi:
+    component_hash: f8bfaad1a98de0dec2cf9a82597d31e422dac5b4ac669b265fdb5d49ffd31baf
+    dependencies:
+    - name: idf
+      version: '>=6.0'
+    - name: espressif/usb
+      public: true
+      version: ^1.0.0
+    source:
+      git: https://github.com/kilrah/esp_usb_host_atapi.git
+      path: .
+      type: git
+    targets:
+    - esp32s2
+    - esp32s3
+    version: a75d0e1636722b3d2186aabcbd34822359401f6b
   lvgl/lvgl:
     component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
     dependencies: []
@@ -101,16 +111,15 @@ dependencies:
       type: local
     version: '*'
 direct_dependencies:
-- esp_usb_host_atapi
 - espressif/cjson
 - espressif/esp_jpeg
 - espressif/esp_lvgl_port
 - espressif/mdns
-- espressif/usb
 - idf
 - joltwallet/littlefs
+- kilrah/esp_usb_host_atapi
 - lvgl/lvgl
 - tdisplay_s3
-manifest_hash: e8f9cfc0df6a4a55ab9000a0bb980c3a733bf2d6ee58b50d8db3beb66fd0ee4e
+manifest_hash: 0b55770d880910bde9a694241e85991fcfe37291f129950d0a30a2b22c925685
 target: esp32s3
 version: 3.0.0
