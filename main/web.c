@@ -25,6 +25,8 @@
 #include "ota.h"
 #include "storage.h"
 #include "app.h"
+#include "lwip/sockets.h"
+#include "esp_netif.h"
 #include "meta.h"
 #include "web.h"
 
@@ -162,6 +164,11 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "ssid", net.ssid);
     jw_kv_str(w, "ip", net.ip);
     jw_kv_str(w, "hostname", CONFIG_CD_HOSTNAME);
+    jw_printf(w, ",\"configured\":%s,\"ap\":{\"active\":%s,\"clients\":%d", net.configured ? "true" : "false",
+              net.ap_active ? "true" : "false", net.ap_clients);
+    jw_kv_str(w, "ssid", net.ap_ssid);
+    jw_kv_str(w, "ip", NET_AP_IP_STR);
+    jw_raw(w, "}", 1);
 
     const esp_app_desc_t *app = esp_app_get_description();
     jw_printf(w, "},\"fw\":{\"uptime\":%"PRIu64, (uint64_t)(esp_timer_get_time() / 1000000));
@@ -259,6 +266,8 @@ static esp_err_t cmd_handler(httpd_req_t *req)
         app_eject_toggle();
     } else if (!strcmp(c, "meta")) {
         meta_refresh();
+    } else if (!strcmp(c, "setup_ap")) {
+        net_setup_ap(arg != 0);
     } else if (!strcmp(c, "meta_forget")) {
         meta_forget();
     } else if (!strcmp(c, "autoplay")) {
@@ -353,6 +362,50 @@ static esp_err_t cover_handler(httpd_req_t *req)
     return err == ESP_OK ? httpd_resp_send_chunk(req, NULL, 0) : err;
 }
 
+static esp_err_t scan_handler(httpd_req_t *req)
+{
+    const int max = 24;
+    net_scan_entry_t *list = malloc(max * sizeof(*list));
+    jw_t *w = malloc(sizeof(*w));
+    int n = list && w ? net_scan(list, max) : -1;
+    if (n < 0) {
+        free(list);
+        free(w);
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "Scan not possible right now (connecting?), try again\n");
+    }
+    jw_begin(w, req);
+    jw_raw(w, "[", 1);
+    for (int i = 0; i < n; i++) {
+        jw_printf(w, "%s{\"rssi\":%d,\"open\":%s", i ? "," : "", list[i].rssi, list[i].open ? "true" : "false");
+        jw_kv_str(w, "ssid", list[i].ssid);
+        jw_raw(w, "}", 1);
+    }
+    jw_raw(w, "]", 1);
+    esp_err_t err = jw_end(w);
+    free(list);
+    free(w);
+    return err;
+}
+
+/** Captive portal: phones probe URLs like /generate_204 or /hotspot-detect.html; anything unknown goes to the UI */
+static esp_err_t not_found_handler(httpd_req_t *req, httpd_err_code_t err)
+{
+    if (strncmp(req->uri, "/favicon", 8) == 0 || strncmp(req->uri, "/api/", 5) == 0) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+    }
+    /* On the AP the probe's host name points to us via the captive DNS, but use the IP to be explicit;
+     * on the home network a relative redirect keeps the host the user typed */
+    struct sockaddr_in local;
+    socklen_t len = sizeof(local);
+    bool via_ap = getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) == 0 &&
+                  local.sin_family == AF_INET && local.sin_addr.s_addr == ESP_IP4TOADDR(192, 168, 4, 1);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", via_ap ? "http://" NET_AP_IP_STR "/" : "/");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, NULL, 0);
+}
+
 static esp_err_t reboot_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Reboot requested from the web UI");
@@ -372,7 +425,9 @@ esp_err_t web_register(httpd_handle_t server)
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
         {.uri = "/api/cover", .method = HTTP_GET, .handler = cover_handler},
+        {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = scan_handler},
     };
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, not_found_handler);
     for (size_t i = 0; i < WEB_URI_HANDLERS; i++) {
         esp_err_t err = httpd_register_uri_handler(server, &uris[i]);
         if (err != ESP_OK) {

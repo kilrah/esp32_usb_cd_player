@@ -22,6 +22,7 @@
 #include <string.h>
 #include "esp_check.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_lvgl_port.h"
 #include "tdisplay_s3.h"
 #include "player.h"
@@ -254,6 +255,17 @@ static void update_cb(lv_timer_t *t)
 
     net_status_t net;
     net_get_status(&net);
+    if (net.ap_active && !net.connected) {
+        /* Setup access point: how to reach the web UI. Network + password and the address alternate every
+         * 3 s: together they don't fit the line (220 px next to the cover) and would scroll. */
+        if ((esp_timer_get_time() / 3000000) % 2 == 0) {
+            const char *pw = net_ap_password();
+            snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s / %s", net.ap_ssid, pw[0] ? pw : "open");
+        } else {
+            snprintf(buf, sizeof(buf), "Setup: http://" NET_AP_IP_STR);
+        }
+        set_text(s_album, buf);
+    }
     snprintf(buf, sizeof(buf), "%d%%", player_volume_display(st.volume));
     set_text(s_vol, buf);
     snprintf(buf, sizeof(buf), "%d%%", st.buffer_pct);

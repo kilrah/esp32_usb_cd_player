@@ -85,6 +85,12 @@ input[type=file] { font-size: 14px; color: var(--dim); max-width: 100%; }
 .toggle small { display: block; color: var(--dim); }
 .toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
 progress { width: 100%; accent-color: var(--accent); }
+.setup { background: color-mix(in srgb, var(--accent) 15%, var(--card)); border: 1px solid var(--accent);
+         border-radius: 14px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
+.setup a { color: var(--accent); }
+ul.nets { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 240px; overflow-y: auto; }
+ul.nets button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 8px; }
+ul.nets .sub { color: var(--dim); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -93,6 +99,7 @@ progress { width: 100%; accent-color: var(--accent); }
     <h1>CD Player</h1>
     <span class="conn"><span class="dot" id="dot"></span><span id="conn">Connecting…</span></span>
   </header>
+  <div class="setup" id="setup" hidden></div>
 
   <div class="card">
     <div class="head">
@@ -153,10 +160,14 @@ progress { width: 100%; accent-color: var(--accent); }
         <h2>Wi-Fi</h2>
         <dl>
           <dt>Network</dt><dd id="w-ssid">–</dd>
+          <dt>Status</dt><dd id="w-state">–</dd>
           <dt>Address</dt><dd id="w-ip">–</dd>
           <dt>Signal</dt><dd id="w-rssi">–</dd>
+          <dt>Setup AP</dt><dd id="w-ap">–</dd>
         </dl>
         <form id="wifi-form" autocomplete="off">
+          <div class="actions"><button type="button" id="scan-btn">Scan for networks</button><button type="button" id="ap-btn">Setup AP on</button><span class="msg" id="scan-msg"></span></div>
+          <ul class="nets" id="nets" hidden></ul>
           <input type="text" name="ssid" id="ssid" placeholder="SSID (empty = clear)" maxlength="32">
           <input type="password" name="pass" placeholder="Password" maxlength="63">
           <div class="actions"><button type="submit">Save and reconnect</button><span class="msg" id="wifi-msg"></span></div>
@@ -212,7 +223,7 @@ progress { width: 100%; accent-color: var(--accent); }
 "use strict";
 const $ = id => document.getElementById(id);
 const ICON_PLAY = "M8 5v14l11-7z", ICON_PAUSE = "M6 19h4V5H6v14zm8-14v14h4V5h-4z";
-let st = null, discKey = "", busy = false, volDragging = false, volTimer = null;
+let st = null, discKey = "", busy = false, volDragging = false, volTimer = null, setupOpened = false;
 
 const mmss = s => (s == null || isNaN(s)) ? "--:--" :
   String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
@@ -256,8 +267,27 @@ function render(s) {
 
   const w = s.wifi;
   $("w-ssid").textContent = w.ssid || "–";
+  $("w-state").textContent = !w.configured ? "Not configured" : w.connected ? "Connected" : "Connecting…";
   $("w-ip").textContent = w.ip ? `${w.ip} (${w.hostname}.local)` : "–";
   $("w-rssi").textContent = w.connected ? w.rssi + " dBm" : "–";
+  $("ap-btn").textContent = w.ap.active ? "Setup AP off" : "Setup AP on";
+  $("ap-btn").dataset.on = w.ap.active ? "1" : "";
+  $("w-ap").textContent = w.ap.active ? `${w.ap.ssid} on ${w.ap.ip}, ${w.ap.clients} client(s)` : "Off";
+
+  /* Setup banner when the page is used through the setup access point */
+  const banner = $("setup");
+  if (w.ap.active && !w.connected) {
+    banner.hidden = false;
+    banner.textContent = w.configured ? `Can't reach "${w.ssid}". Check the Wi-Fi settings below.`
+                                      : "Setup: choose the Wi-Fi network for the player below.";
+    if (!setupOpened) { setupOpened = true; $("settings").open = true; }
+  } else if (w.ap.active && w.connected && location.hostname === w.ap.ip) {
+    banner.hidden = false;
+    banner.replaceChildren(`Connected to "${w.ssid}". Continue at `, Object.assign(document.createElement("a"),
+      {href: `http://${w.ip}/`, textContent: `http://${w.ip}/`}), ` (${w.hostname}.local). This access point turns off in about 30 s.`);
+  } else {
+    banner.hidden = true;
+  }
   const f = s.fw;
   $("f-ver").textContent = f.version;
   $("f-built").textContent = f.built;
@@ -360,6 +390,37 @@ vol.addEventListener("input", () => {
 $("meta-btn").addEventListener("click", () => cmd("meta"));
 
 $("autoplay").addEventListener("change", e => cmd("autoplay", e.target.checked ? 1 : 0));
+
+$("ap-btn").addEventListener("click", () => cmd("setup_ap", $("ap-btn").dataset.on ? 0 : 1));
+
+$("scan-btn").addEventListener("click", async () => {
+  const btn = $("scan-btn"), msg = $("scan-msg"), ul = $("nets");
+  btn.disabled = true;
+  msg.textContent = "Scanning…";
+  try {
+    const r = await fetch("/api/wifi/scan", {cache: "no-store"});
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const list = await r.json();
+    ul.replaceChildren(...list.map(n => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = n.ssid;
+      const meta = document.createElement("span");
+      meta.className = "sub";
+      meta.textContent = `${n.rssi} dBm${n.open ? ", open" : ""}`;
+      b.append(meta);
+      b.onclick = () => { $("ssid").value = n.ssid; document.querySelector("#wifi-form [name=pass]").focus(); };
+      li.append(b);
+      return li;
+    }));
+    ul.hidden = !list.length;
+    msg.textContent = list.length ? "Pick a network, then enter its password" : "No networks found";
+  } catch (e) {
+    msg.textContent = e.message || "Scan failed";
+  }
+  btn.disabled = false;
+});
 
 $("wifi-form").addEventListener("submit", async e => {
   e.preventDefault();

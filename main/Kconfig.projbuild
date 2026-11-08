@@ -17,6 +17,15 @@ menu "CD player"
         string "Default Wi-Fi password"
         default ""
 
+    config CD_AP_PASSWORD
+        string "Setup access point password"
+        default "cdplayer"
+        help
+            WPA2 password of the setup access point (CDPlayer-XXXX, 192.168.4.1), which starts when no
+            Wi-Fi network is configured or the configured one can't be reached. It is shown on the
+            display while the AP is on. At least 8 characters; shorter = open network (not recommended:
+            the web UI has no login and allows firmware uploads).
+
     config CD_META_CONTACT
         string "Contact for the MusicBrainz User-Agent"
         default ""

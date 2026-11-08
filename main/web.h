@@ -7,6 +7,8 @@
  *   GET  /api/cover        cover art of the loaded disc (cached JPEG, 404 if none)
  *   POST /api/cmd?c=..&v=  player command, returns /api/status
  *   POST /api/wifi         form body ssid=..&pass=.. (URL-encoded)
+ *   GET  /api/wifi/scan    nearby networks (JSON, takes ~2 s)
+ * Unknown URLs redirect to / (captive portal on the setup AP).
  *   POST /api/reboot
  * Firmware upload uses POST /ota (ota.c).
  *
@@ -19,6 +21,6 @@
 #include "esp_http_server.h"
 
 /** Number of URI handlers web_register() adds */
-#define WEB_URI_HANDLERS 7
+#define WEB_URI_HANDLERS 8
 
 esp_err_t web_register(httpd_handle_t server);

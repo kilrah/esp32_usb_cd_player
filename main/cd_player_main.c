@@ -36,6 +36,7 @@
 static const char *TAG = "cd";
 
 #define CD_READ_SPEED_KBPS  (4 * ATAPI_SPEED_1X_KBPS)  /* 4x: plenty of margin, less noise than max */
+#define TRANSPORT_FAILURES_HUNG 2 /* consecutive polls failing at the USB/BOT level (each ~10 s): drive hung */
 
 typedef enum {
     APP_DEVICE_CONNECTED,
@@ -368,6 +369,7 @@ void app_main(void)
     bool disc_loaded = false;
     bool tray_open = false;
     esp_err_t last_state = ESP_FAIL;
+    int transport_failures = 0;   /* consecutive polls that failed at the USB/BOT level */
 
     while (true) {
         app_msg_t msg;
@@ -382,7 +384,8 @@ void app_main(void)
                 esp_err_t err = atapi_host_install_device(msg.address, &dev);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Device %d is not a usable optical drive: %s", msg.address, esp_err_to_name(err));
-                    player_set_message("Unsupported USB device");
+                    /* NOT_SUPPORTED: not a BOT CD/DVD device. Otherwise INQUIRY never got an answer: hung drive */
+                    player_set_message(err == ESP_ERR_NOT_SUPPORTED ? "Unsupported USB device" : "Drive not responding - power-cycle it");
                     dev = NULL;
                     break;
                 }
@@ -439,6 +442,16 @@ void app_main(void)
             continue;
         }
         esp_err_t state = atapi_host_wait_ready(dev, 1000);
+
+        /* A hung drive: the bridge takes commands but never answers, BOT reset recovery doesn't help, and
+         * neither does a USB bus reset (tested: root port power cycle / ESP reboot re-enumerate the bridge,
+         * the drive behind it stays hung). Only cutting the drive's power helps; VBUS isn't switchable on
+         * the T-Display S3, so tell the user. */
+        transport_failures = state == ESP_ERR_ATAPI_TRANSPORT ? transport_failures + 1 : 0;
+        if (transport_failures == TRANSPORT_FAILURES_HUNG) {
+            ESP_LOGE(TAG, "Drive not responding (%d failed polls); it needs a power cycle", transport_failures);
+            player_set_message("Drive not responding - power-cycle it");
+        }
         if (state != last_state) {
             if (state == ESP_ERR_ATAPI_NO_MEDIUM) {
                 atapi_sense_t s;
@@ -459,7 +472,9 @@ void app_main(void)
                 player_set_message("Loading...");
             } else if (state != ESP_OK) {
                 ESP_LOGW(TAG, "Drive state: %s (0x%x)", esp_err_to_name(state), state);
-                player_set_message("Drive error");
+                if (transport_failures < TRANSPORT_FAILURES_HUNG) {
+                    player_set_message("Drive error");
+                }
             }
             last_state = state;
         }

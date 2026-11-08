@@ -18,6 +18,7 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | I2S output to PCM5102 | Working: gapless across tracks, 0 underruns in testing. Needs the module's solder bridges set (see below) |
 | Transport: play/pause, stop, next/prev, seek, track select, volume | Working (web UI and serial commands; physical buttons to be added). Autoplay on disc load (setting); volume and autoplay persisted in NVS |
 | Web UI (controls, track list, settings, firmware upload) at http://cdplayer.local/ | Working |
+| Setup access point (no / unreachable Wi-Fi network) with captive portal | Working: AP, scan, web UI over the LAN tested; joining the AP from a phone not yet tested |
 | Album info + cover art from MusicBrainz / Cover Art Archive (CD-TEXT discs: cover, text gaps), cached in LittleFS | Working (exact disc ID match, cover on screen and in the web UI, offline from cache) |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
@@ -87,6 +88,30 @@ serial port is exposed there. To flash:
 A cable flash writes the bootloader, the partition table, the app into `ota_0`, and the initial otadata (so
 `ota_0` boots, whichever slot ran before). NVS (volume, Wi-Fi credentials) and the LittleFS partition are not
 erased. `idf.py erase-flash` erases both.
+
+### Wi-Fi setup access point
+
+Without a usable Wi-Fi network, the player opens its own access point so the web UI can be reached for setup
+([main/net.c](main/net.c), [main/captive_dns.c](main/captive_dns.c)):
+
+- **When:** right at boot if no network is configured. If a network is configured but not reachable
+  for 30 s (at boot, or after the connection was lost), the AP starts too. The station keeps retrying in
+  the background (AP+STA mode). It can also be switched on or off by hand: *Setup AP on/off* in the web UI, or
+  `api/cmd?c=setup_ap&v=1/0`. Switched on by hand, it stays on until switched off or the next reboot.
+- **Name / password:** `CDPlayer-XXXX` (last MAC bytes), WPA2 with `CONFIG_CD_AP_PASSWORD` (menuconfig
+  *CD player*, default `cdplayer`; shorter than 8 characters = open network). The display's top line shows
+  the network name and password, alternating every 3 s with the address, while the AP is on and there is no
+  other connection.
+- **Web UI at http://192.168.4.1/.** A captive-portal DNS answers every name with 192.168.4.1 (it is offered
+  via DHCP on the AP only; the device's own lookups still go through the station), and unknown URLs redirect
+  to the UI, so phones open the page by themselves after joining. The page shows a setup banner and opens the
+  settings; *Scan for networks* lists nearby networks to pick from.
+- **After setup:** once the station has an IP address, the page shows the new address, and the AP turns off
+  30 s later.
+- AP and station share the radio, and each connection attempt scans all channels, which disturbs AP
+  clients. While someone is connected to the AP, attempts are limited to one per minute (except right after
+  new credentials were saved).
+- **Security:** the web UI has no login and accepts firmware uploads, so set your own AP password.
 
 ### Firmware update over Wi-Fi (OTA)
 
@@ -158,6 +183,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/net.c](main/net.c) | Wi-Fi station: credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS hostname `cdplayer` (`CONFIG_CD_HOSTNAME`), starts the HTTP server on the first IP address |
 | [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
 | [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
+| [main/captive_dns.c](main/captive_dns.c) | DNS server for the setup AP: every A query answered with 192.168.4.1 |
 | [main/meta.c](main/meta.c) | Album metadata: cache lookup, MusicBrainz disc ID query, Cover Art Archive download, JPEG decode + scale for the screen (see below) |
 | [main/discid.c](main/discid.c) | MusicBrainz disc ID (SHA-1 + base64 over the TOC; own SHA-1, since mbedTLS 4 doesn't export it) |
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
@@ -226,8 +252,9 @@ No authentication, like OTA. The JSON API can also be used by scripts:
 | `GET /api/status` | Player state, position/length in seconds, volume (%), buffer, counters, CD-TEXT, Wi-Fi, firmware (version, ELF hash prefix, partition, OTA state, uptime), memory, storage |
 | `GET /api/cover` | Cover art of the current disc (cached JPEG), 404 if none |
 | `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
-| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc). Returns the status |
+| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `setup_ap&v=1/0`. Returns the status |
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
+| `GET /api/wifi/scan` | Nearby networks `[{"ssid", "rssi", "open"}]`, strongest first (takes ~2 s) |
 | `POST /api/reboot` | Restart |
 
 Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
@@ -325,6 +352,14 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
   flight. When the disc stops being readable, the value stays up for a while: the drive keeps serving reads from
   its own read-ahead cache. Then it falls to zero within ~2.5 s, once that cache runs dry.
 
+- **Hung drive:** the drive can stop answering completely. The USB bridge still enumerates and accepts
+  commands, but never returns data or status. BOT reset recovery doesn't help, and neither does a USB bus reset:
+  a root port power cycle and an ESP reboot were both tested, and both re-enumerate the bridge while the drive
+  behind it stays hung. Only cutting the drive's power helps. Seen once with the HP BD drive (Initio bridge)
+  after 18 read errors during playback. After two failed polls (~20 s), the screen shows *Drive not responding -
+  power-cycle it*. The same message appears when a connected drive never answers INQUIRY. The tray button
+  still works, because it doesn't depend on USB.
+
 ## Next steps
 
 1. De-emphasis filter for tracks flagged with pre-emphasis (rare on commercial CDs).
@@ -332,7 +367,8 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
 3. Media change events via `atapi_host_get_media_status()` instead of polling TEST UNIT READY every second.
 4. Power management: spin down / stop the drive after a while in stopped state, dim the backlight.
 5. Physical buttons (transport + eject), with debouncing.
-6. Final board: QIO flash.
+6. Final board: QIO flash, and a **GPIO-controlled load switch on the drive's 5 V (VBUS)**, so a hung drive
+   can be power-cycled automatically. On the T-Display S3, VBUS of the USB-C port isn't switchable.
 8. OTA authentication (token/password).
 9. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
    need to be bridged. The drive's own cache already covers several seconds.
