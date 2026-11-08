@@ -1,0 +1,51 @@
+dependencies:
+  espressif/led_strip:
+    component_hash: 027f68f2b57b0dca1d68dff6cc1139d9093825aa808c2bc3ca42bb2ce530fce9
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.1.1
+  espressif/usb:
+    component_hash: 99eee72ea224d9117d4c342442717a1f20bf8112e2ab5d7d7038b827874f4c92
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    - esp32h4
+    - linux
+    version: 1.6.0
+  idf:
+    source:
+      type: idf
+    version: 6.1.0
+  usb_host_atapi:
+    dependencies:
+    - name: idf
+      version: '>=6.0'
+    - name: espressif/usb
+      public: true
+      version: ^1.0.0
+    source:
+      path: components/usb_host_atapi
+      type: local
+    version: '*'
+direct_dependencies:
+- espressif/led_strip
+- espressif/usb
+- idf
+- usb_host_atapi
+manifest_hash: 056995cab0246c24dad29da385b836e1a6610701078ecbe7e1103371312bade1
+target: esp32s3
+version: 3.0.0
