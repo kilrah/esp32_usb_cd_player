@@ -66,6 +66,10 @@ ol.tracks li.data { color: var(--dim); cursor: default; }
 ol.tracks .n, ol.tracks .len { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 13px; }
 ol.tracks li.current .n { color: var(--accent); }
 ol.tracks .sub { display: block; color: var(--dim); font-size: 13px; }
+.tracks-total { display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; padding: 8px 6px 0; margin-top: 4px; border-top: 1px solid var(--line); color: var(--dim); font-size: 13px; }
+.tracks-total span:first-child { grid-column: 2; }
+.tracks-total .len { font-variant-numeric: tabular-nums; }
+.tracks-total[hidden] { display: none; }
 .empty { color: var(--dim); font-size: 14px; }
 details.card { padding: 0; }
 details summary { padding: 14px 16px; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
@@ -148,6 +152,7 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
   <div class="card">
     <h2>Tracks</h2>
     <ol class="tracks" id="tracks"></ol>
+    <div class="tracks-total" id="tracks-total" hidden><span>Total</span><span class="len" id="tracks-total-len"></span></div>
     <div class="empty" id="notracks">No disc</div>
   </div>
 
@@ -377,6 +382,7 @@ function render(s) {
 
   const key = disc ? `${s.tracks}/${s.disc_len}/${s.album}/${m.state}` : "";
   if (key !== discKey) { discKey = key; loadTracks(); }
+  $("notracks").textContent = !disc && s.message === "No audio tracks" ? s.message : "No disc";
   document.querySelectorAll("#tracks li").forEach(li => li.classList.toggle("current", disc && +li.dataset.n === s.track));
 }
 
@@ -400,6 +406,12 @@ async function loadTracks() {
     return li;
   }));
   $("notracks").hidden = list.length > 0;
+  /* Total playing time: the lead-out position (same as the device display) unless there is a data
+     track (Enhanced CD), then the sum of the audio tracks, which are rounded down to whole seconds */
+  const audio = list.filter(t => t.audio);
+  const total = audio.length === list.length ? st.disc_len : audio.reduce((a, t) => a + t.len, 0);
+  $("tracks-total").hidden = !audio.length;
+  $("tracks-total-len").textContent = mmss(total);
 }
 
 async function poll() {

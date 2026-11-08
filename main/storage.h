@@ -15,7 +15,10 @@
 /** Mount the filesystem; formats the partition if it holds no valid LittleFS (first boot) */
 esp_err_t storage_init(void);
 
-/** Filesystem size and usage in bytes (0 if not mounted) */
+/** Filesystem size and usage in bytes (0 if not mounted). Cached: call storage_changed() after writing files. */
 void storage_get_info(size_t *total, size_t *used);
+
+/** Files were written or deleted: storage_get_info() re-reads the usage */
+void storage_changed(void);
 
 void storage_print_info(void);

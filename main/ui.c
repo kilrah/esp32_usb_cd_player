@@ -374,9 +374,10 @@ static void update_cb(lv_timer_t *t)
 
     net_status_t net;
     net_get_status(&net);
-    if (net.ap_active && !net.connected) {
+    if (net.ap_active && !net.connected && st.state != PLAYER_PLAYING && st.state != PLAYER_PAUSED) {
         /* Setup access point: how to reach the web UI. Network + password and the address alternate every
-         * 3 s: together they don't fit the line (220 px next to the cover) and would scroll. */
+         * 3 s: together they don't fit the line (220 px next to the cover) and would scroll.
+         * Only when idle (stopped or no disc); during playback the line shows the album. */
         if ((esp_timer_get_time() / 3000000) % 2 == 0) {
             const char *pw = net_ap_password();
             snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s / %s", net.ap_ssid, pw[0] ? pw : "open");

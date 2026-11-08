@@ -166,7 +166,9 @@ static esp_err_t write_file(const char *path, const void *data, size_t len)
         return ESP_FAIL;
     }
     size_t n = fwrite(data, 1, len, f);
-    return (fclose(f) == 0 && n == len) ? ESP_OK : ESP_FAIL;
+    esp_err_t err = (fclose(f) == 0 && n == len) ? ESP_OK : ESP_FAIL;
+    storage_changed();
+    return err;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -445,8 +447,8 @@ static void cache_save(const char *discid, const mb_result_t *res, const uint8_t
             ESP_LOGW(TAG, "Writing %s failed", path);
             jpg = NULL;
         }
-    } else {
-        unlink(path);
+    } else if (unlink(path) == 0) {
+        storage_changed();
     }
 
     const player_meta_t *m = res->meta;
@@ -768,6 +770,7 @@ void meta_forget(void)
     if (json[0]) {
         unlink(json);
         unlink(jpg);
+        storage_changed();
         ESP_LOGI(TAG, "Cache entry deleted: %s", json);
     }
 }

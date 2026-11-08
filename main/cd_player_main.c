@@ -328,6 +328,22 @@ static bool load_disc(atapi_host_device_handle_t dev)
     }
     print_toc(&toc, cdtext);
 
+    bool has_audio = false;
+    for (int i = 0; i < toc.num_tracks; i++) {
+        has_audio |= !atapi_toc_entry_is_data(&toc.tracks[i]);
+    }
+    if (!has_audio) {
+        /* Data-only disc: nothing to play, no metadata lookup. The player stays without a disc (so the UI shows
+         * the message), but the disc counts as loaded: it isn't re-read on every poll, and eject still works. */
+        ESP_LOGI(TAG, "No audio tracks on this disc");
+        if (cdtext) {
+            atapi_cd_text_free(cdtext);
+            free(cdtext);
+        }
+        player_set_message("No audio tracks");
+        return true;
+    }
+
     err = atapi_host_set_speed(dev, CD_READ_SPEED_KBPS);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));

@@ -16,6 +16,13 @@ static const char *TAG = "storage";
 
 static bool s_mounted;
 
+/* esp_littlefs_info() walks the whole filesystem with flash reads, which stall both cores (cache off) for
+ * ~90 ms: called once a second by the web page's status poll, that made the display's scrolling text hitch.
+ * So the usage is cached and only re-read after a change (storage_changed()). */
+static volatile uint32_t s_change_gen = 1;
+static uint32_t s_info_gen;
+static size_t s_total, s_used;
+
 esp_err_t storage_init(void)
 {
     const esp_vfs_littlefs_conf_t conf = {
@@ -36,12 +43,23 @@ esp_err_t storage_init(void)
     return ESP_OK;
 }
 
+void storage_changed(void)
+{
+    s_change_gen++;
+}
+
 void storage_get_info(size_t *total, size_t *used)
 {
     *total = *used = 0;
-    if (s_mounted) {
-        esp_littlefs_info(PARTITION_LABEL, total, used);
+    if (!s_mounted) {
+        return;
     }
+    uint32_t gen = s_change_gen;
+    if (gen != s_info_gen && esp_littlefs_info(PARTITION_LABEL, &s_total, &s_used) == ESP_OK) {
+        s_info_gen = gen; /* a change during the call leaves gen behind: re-read next time */
+    }
+    *total = s_total;
+    *used = s_used;
 }
 
 void storage_print_info(void)

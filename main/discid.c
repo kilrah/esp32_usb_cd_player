@@ -122,8 +122,8 @@ int discid_compute(const atapi_toc_t *toc, char id[DISCID_LEN + 1], char *toc_st
         leadout = toc->tracks[n - 1].lba - DATA_TRACK_GAP;
         n--;
     }
-    if (n < 1) {
-        return 0;
+    if (n < 1 || (n == 1 && atapi_toc_entry_is_data(&toc->tracks[0]))) {
+        return 0; /* no audio tracks */
     }
     int first = toc->tracks[0].number, last = toc->tracks[n - 1].number;
 
