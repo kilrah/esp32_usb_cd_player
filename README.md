@@ -1,13 +1,37 @@
-# USB CD Player (ESP32-S3)
+# ESP USB CD Player
 
-A standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP32-S3
-USB Host port, plays them through a PCM5102 I2S DAC, and shows track info on the LilyGO T-Display S3's screen.
+An ESP-based standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP's USB Host port, plays them through an I2S DAC, shows track info on a display and provides a webui for interaction. Local button controls not implemented yet.
+USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/SATA desktop/laptop drive works behind an appropriate USB adapter.
 
-The project started from Espressif's USB Host MSC example. The MSC driver has been replaced by
-our own [`esp_usb_host_atapi`](https://github.com/kilrah/esp_usb_host_atapi) driver, published as a separate component (pulled from GitHub by
-the component manager).
+Currently running on a LilyGO T-Display S3 with a PCM5102 DAC, but should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
+
+Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`.  
+
+CD-TEXT is displayed if available, and if internet is available disc metadata including cover will be retrieved from MusicBrainz / Cover Art Archive and cached locally in the LittleFS storage partition. 
+A 1.5MB audio ring buffer is used to cover the case where playback is paused, the drive goes to idle and takes long to spin back up when resuming (more likely than using it while running these days...)
+
+![board](docs/img/board.jpg)
+
+![webui](docs/img/ui.jpg)
+
+![settings](docs/img/settings.jpg)
+
+Video: 
+
+[![video](https://img.youtube.com/vi/6zRHcc-hUBA/0.jpg)](https://youtu.be/6zRHcc-hUBA)
+
+## Hardware notes:
+
+Most ESP boards with USB Host support need modification, e.g.
+- On the T-Display S3 where the USB port is normally used in "device" mode there is a diode that prevents an external supply from backfeeding into the hist computer. That diode needs to be removed and replaced with a jumper for the USB port to provide power to the drive (and 5V supplied from board pads).
+- On some Devkit-C-like boards with 2 ports the native USB port gets power from the USB-serial port, but through a fuse that causes too much voltage drop at the current a self-powered drive needs, so that also needs bypassing when using e-g- a laptop drive with no external power.
+
+# Agent details below
 
 ## Status
+
+The project started from Espressif's USB Host MSC example with much Claude usage. The MSC driver has been replaced by our own [`esp_usb_host_atapi`](https://github.com/kilrah/esp_usb_host_atapi) driver, published as a separate component (pulled from GitHub by
+the component manager).
 
 | Area | State |
 |---|---|
@@ -29,7 +53,6 @@ the component manager).
 | Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (album info cache in `/data/meta`). The app is ~1.6 MB |
 | Power saving: drive spin-down after 2 min without playback; backlight dimming / off (web UI *Settings > Display*) | Working |
 | Admin password for firmware upload and settings (HTTP Basic auth) | Working (optional, off by default) |
-| Flash QIO mode | Prepared; needs one cable flash (OTA refuses a flash mode change) |
 
 Verified with an **HP BD ROM BC-5501H** (slim SATA BD drive) behind an **Initio** USB bridge
 (VID 0x13fd, PID 0x0840, interface subclass 0x02 / ATAPI, Bulk-Only), using a pressed audio CD with
@@ -157,7 +180,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 
 | Name | Type | Offset | Size | Use |
 |---|---|---|---|---|
-| nvs | data/nvs | 0x9000 | 24 KB | Settings (volume, Wi-Fi credentials). Same offset/size as the old table, so settings survived the switch |
+| nvs | data/nvs | 0x9000 | 24 KB | Settings (volume, Wi-Fi credentials). |
 | otadata | data/ota | 0xF000 | 8 KB | Which OTA slot boots, rollback state |
 | phy_init | data/phy | 0x11000 | 4 KB | RF calibration data |
 | ota_0 | app | 0x20000 | 2.5 MB | Firmware slot A |
@@ -342,15 +365,15 @@ SCK is driven with MCLK = 256·fs from GPIO17. Alternatively, tie SCK to GND to 
 ### Screen
 
 ```
-+------------------------------------------------+
-| Lorde - Virgin                    +--------+   |
-| GRWM                    (scrolls) | cover  |   |
-| Track 8 / 11                      | 72x72  |   |
-|                                   +--------+   |
++-----------------------------------------------+
+| Lorde - Virgin                    +--------+  |
+| GRWM                    (scrolls) | cover  |  |
+| Track 8 / 11                      | 72x72  |  |
+|                                   +--------+  |
 | 00:26               / 02:35                 > |
 | [=========----------------------------------] |
 | Vol 100%   Buf  92%   (wifi) (warn)     34:56 |
-+------------------------------------------------+
++-----------------------------------------------+
 ```
 
 **Backlight** (web UI *Settings > Display*, `POST /api/display`, stored in NVS namespace `display`):
@@ -381,7 +404,7 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
   and a warning icon appears on screen. Every failed attempt, and every read slower than 500 ms, is logged
   (`player: Slow read at LBA ...`); normal reads take ~60 ms.
 - **Buffer metric** (`Buf` on screen, `buf=..%(..ms)` in the status line): audio read ahead but not yet sent to
-  I2S, counted in sectors. Full is ~90-97 % (~2.4 s) during playback, because the reader always has one chunk in
+  I2S, counted in sectors. Full is ~90-97 % (~8 s) during playback, because the reader always has one chunk in
   flight. When the disc stops being readable, the value stays up for a while: the drive keeps serving reads from
   its own read-ahead cache. Then it falls to zero within ~2.5 s, once that cache runs dry.
 
@@ -396,7 +419,3 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
 ## Next steps
 
 1. Physical buttons (transport + eject), with debouncing.
-2. Final board: a **GPIO-controlled load switch on the drive's 5 V (VBUS)**, so a hung drive can be
-   power-cycled automatically. On the T-Display S3, VBUS of the USB-C port isn't switchable.
-3. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
-   need to be bridged. The drive's own cache already covers several seconds.
