@@ -17,4 +17,11 @@ menu "CD player"
         string "Default Wi-Fi password"
         default ""
 
+    config CD_META_CONTACT
+        string "Contact for the MusicBrainz User-Agent"
+        default ""
+        help
+            MusicBrainz asks API clients to identify themselves with "app/version ( contact )",
+            e.g. a project URL or an e-mail address. Optional.
+
 endmenu

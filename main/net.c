@@ -212,6 +212,11 @@ void net_get_status(net_status_t *st)
     portEXIT_CRITICAL(&s_lock);
 }
 
+bool net_is_connected(void)
+{
+    return s_status.connected;
+}
+
 void net_print_info(void)
 {
     net_status_t st;

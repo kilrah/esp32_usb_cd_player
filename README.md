@@ -18,12 +18,13 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | I2S output to PCM5102 | Working: gapless across tracks, 0 underruns in testing. Needs the module's solder bridges set (see below) |
 | Transport: play/pause, stop, next/prev, seek, track select, volume | Working (web UI and serial commands; physical buttons to be added). Autoplay on disc load (setting); volume and autoplay persisted in NVS |
 | Web UI (controls, track list, settings, firmware upload) at http://cdplayer.local/ | Working |
+| Album info + cover art from MusicBrainz / Cover Art Archive (CD-TEXT discs: cover, text gaps), cached in LittleFS | Working (exact disc ID match, cover on screen and in the web UI, offline from cache) |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
 | De-emphasis for pre-emphasis tracks | Not implemented |
 | Non-ASCII CD-TEXT characters on screen | Not rendered (LVGL Montserrat fonts are ASCII only) |
 | Wi-Fi (station, mDNS `cdplayer.local`), firmware update over Wi-Fi (OTA) with rollback | Working: ~12 s per update (~120 KiB/s), slots alternate, new image confirms itself. Playback unaffected by Wi-Fi |
-| Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (mounted, not used yet). The app is ~1.4 MB |
+| Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (album info cache in `/data/meta`). The app is ~1.6 MB |
 | Final board: flash QIO mode | Pending |
 
 Verified with an **HP BD ROM BC-5501H** (slim SATA BD drive) behind an **Initio** USB bridge
@@ -157,12 +158,48 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/net.c](main/net.c) | Wi-Fi station: credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS hostname `cdplayer` (`CONFIG_CD_HOSTNAME`), starts the HTTP server on the first IP address |
 | [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
 | [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
+| [main/meta.c](main/meta.c) | Album metadata: cache lookup, MusicBrainz disc ID query, Cover Art Archive download, JPEG decode + scale for the screen (see below) |
+| [main/discid.c](main/discid.c) | MusicBrainz disc ID (SHA-1 + base64 over the TOC; own SHA-1, since mbedTLS 4 doesn't export it) |
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
 
 On disc load the drive is set to 4x (`SET CD SPEED`) for less noise. CD audio needs 1x.
 A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up.
 This is the *Autoplay* setting in the web UI (NVS namespace `player`, key `autoplay`, default on).
+
+### Album info and cover art
+
+When a disc is loaded ([main/meta.c](main/meta.c)):
+
+1. The MusicBrainz disc ID is computed from the TOC. A trailing data track (Enhanced CD) is excluded and the
+   lead-out moved to its start - 11400, like libdiscid.
+2. The cache is checked: `/data/meta/<discid>.json` (album, artist, track titles/artists, release ID) and
+   `<discid>.jpg` (the cover as downloaded). A hit is applied right away, without a network connection.
+3. Otherwise, as soon as Wi-Fi is connected: `GET https://musicbrainz.org/ws/2/discid/<id>?toc=...`
+   (the TOC enables fuzzy matching if the exact ID isn't known). The chosen release is the one that lists this
+   disc ID, has front cover art, and has the same track count. Then the cover:
+   `https://coverartarchive.org/release/<mbid>/front-250` (or the release group's), redirected to archive.org.
+   The result is cached.
+4. The player shows the data wherever CD-TEXT has nothing (CD-TEXT always wins, so for CD-TEXT discs this
+   mostly adds the cover). The cover is decoded
+   (`espressif/esp_jpeg`, 1/2 scale), center-cropped and area-averaged to 72×72 for the screen.
+
+Failures are retried after 5, 15, 60 and 180 s, then given up until the disc is reloaded. The reason of the last
+failure is shown by `w` and in the web UI (Album info). A disc unknown to MusicBrainz is remembered until reboot, so it
+isn't looked up again on every insert. Serial `M` or *Look up online again* in the web UI refreshes a cached
+entry. While a lookup runs, a spinner turns in the cover area, on the display and in the web UI. The lookup typically
+takes about 1 s for MusicBrainz and 5-20 s for the cover (archive.org is slow). It runs in its own task and
+doesn't disturb playback.
+
+Notes:
+- **TLS:** the certificate bundle with `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY`. Without it,
+  archive.org fails verification: its GoDaddy chain ends at the old Class 2 root, which is no longer in the
+  bundle. mbedTLS and cJSON allocate in PSRAM. No SNTP: certificate validity dates aren't checked (IDF default).
+- MusicBrainz asks clients for a User-Agent with contact info: optional `CONFIG_CD_META_CONTACT`
+  (menuconfig *CD player*).
+- The screen font is ASCII only, so text is transliterated for the display (typographic quotes, dashes,
+  Latin-1/Latin Extended-A accents). The web UI shows the original UTF-8.
+- Progressive JPEGs can't be decoded by TJpgDec; such covers are skipped (not cached).
 
 ### Controls
 
@@ -187,8 +224,9 @@ No authentication, like OTA. The JSON API can also be used by scripts:
 | Request | Function |
 |---|---|
 | `GET /api/status` | Player state, position/length in seconds, volume (%), buffer, counters, CD-TEXT, Wi-Fi, firmware (version, ELF hash prefix, partition, OTA state, uptime), memory, storage |
+| `GET /api/cover` | Cover art of the current disc (cached JPEG), 404 if none |
 | `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
-| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`. Returns the status |
+| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc). Returns the status |
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
 | `POST /api/reboot` | Restart |
 
@@ -208,7 +246,8 @@ Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
 | `i` | Print status |
 | `a` | Diagnostics: measure MCLK/BCK/LCK frequencies and DIN activity on the I2S pins (pulse counter, outputs undisturbed) |
 | `t` | Diagnostics: 1 kHz test tone for 3 s (pauses the player) |
-| `w` | Network/firmware info: Wi-Fi state, IP, RSSI, firmware version/ELF SHA/partition/OTA state, storage use, free heap |
+| `w` | Network/firmware info: Wi-Fi state, IP, RSSI, firmware version/ELF SHA/partition/OTA state, storage use, free heap, album info state (disc ID, source, cover) |
+| `M` | Look up album info / cover online again for the current disc (refreshes the cache) |
 | `W` | Set Wi-Fi credentials (prompts for SSID and password; Enter on an empty SSID clears them) |
 | `h` | Help |
 
@@ -251,16 +290,17 @@ SCK is driven with MCLK = 256·fs from GPIO17. Alternatively, tie SCK to GND to 
 
 ```
 +------------------------------------------------+
-| Lorde - Virgin                       (scrolls) |
-| GRWM                                 (scrolls) |
-| Track 8 / 11                                > |
-| 00:26               / 02:35                    |
+| Lorde - Virgin                    +--------+   |
+| GRWM                    (scrolls) | cover  |   |
+| Track 8 / 11                      | 72x72  |   |
+|                                   +--------+   |
+| 00:26               / 02:35                 > |
 | [=========----------------------------------] |
-| Vol 100%  Buf 91%  (wifi)               34:56 |
+| Vol 100%   Buf  92%   (wifi) (warn)     34:56 |
 +------------------------------------------------+
 ```
 
-A Wi-Fi symbol after the buffer value means connected. During a firmware update, the title line shows the progress.
+The cover is only shown when there is one (album info section); the album and title lines then end left of it. The play state symbol sits at the right end of the time line. A Wi-Fi symbol after the buffer value means connected. During a firmware update, the title line shows the progress.
 
 When there is no disc, the title line shows the drive state: Waiting for drive, Drive found..., Loading...,
 No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
@@ -293,7 +333,6 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
 4. Power management: spin down / stop the drive after a while in stopped state, dim the backlight.
 5. Physical buttons (transport + eject), with debouncing.
 6. Final board: QIO flash.
-7. Online metadata (track lists, cover art) cached in LittleFS at `/data`, e.g. looked up by disc ID from the TOC.
 8. OTA authentication (token/password).
 9. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
    need to be bridged. The drive's own cache already covers several seconds.

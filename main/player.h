@@ -83,6 +83,22 @@ void player_set_message(const char *msg);
 void player_command(player_cmd_t cmd, int arg);
 void player_get_status(player_status_t *st);
 
+/** Album metadata from another source than CD-TEXT (online lookup / cache), indexed by track number */
+typedef struct {
+    char album[PLAYER_TEXT_LEN];
+    char artist[PLAYER_TEXT_LEN];
+    struct {
+        char title[PLAYER_TEXT_LEN];
+        char artist[PLAYER_TEXT_LEN];
+    } track[ATAPI_MAX_TRACKS + 1];
+} player_meta_t;
+
+/**
+ * Attach metadata to the loaded disc (takes ownership, NULL clears). CD-TEXT fields take precedence;
+ * this fills the empty ones. Freed on unload / next disc.
+ */
+void player_set_metadata(player_meta_t *meta);
+
 /** Track list entry (strings UTF-8, never NULL) */
 typedef struct {
     int number;

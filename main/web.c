@@ -25,6 +25,7 @@
 #include "ota.h"
 #include "storage.h"
 #include "app.h"
+#include "meta.h"
 #include "web.h"
 
 static const char *TAG = "web";
@@ -176,9 +177,18 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "elf", elf);
     jw_kv_str(w, "partition", esp_ota_get_running_partition()->label);
     jw_kv_str(w, "state", ota_running_state_name());
+    jw_kv_str(w, "reset", ota_reset_reason_name());
 
     size_t fs_total = 0, fs_used = 0;
     storage_get_info(&fs_total, &fs_used);
+    meta_info_t mi;
+    meta_get_info(&mi);
+    jw_printf(w, "},\"meta\":{\"cover\":%s", mi.has_cover ? "true" : "false");
+    jw_kv_str(w, "discid", mi.discid);
+    jw_kv_str(w, "state", meta_state_name(mi.state));
+    jw_kv_str(w, "release", mi.release);
+    jw_kv_str(w, "error", mi.error);
+
     jw_printf(w, "},\"sys\":{\"heap_internal\":%u,\"heap_internal_min\":%u,\"heap_psram\":%u,"
               "\"fs_used\":%u,\"fs_total\":%u}}",
               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -247,6 +257,10 @@ static esp_err_t cmd_handler(httpd_req_t *req)
         player_command(PLAYER_CMD_VOLUME_SET, raw);
     } else if (!strcmp(c, "eject")) {
         app_eject_toggle();
+    } else if (!strcmp(c, "meta")) {
+        meta_refresh();
+    } else if (!strcmp(c, "meta_forget")) {
+        meta_forget();
     } else if (!strcmp(c, "autoplay")) {
         player_set_autoplay(arg != 0);
     } else {
@@ -315,6 +329,30 @@ static esp_err_t wifi_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t cover_handler(httpd_req_t *req)
+{
+    char path[64];
+    FILE *f = meta_cover_path(path, sizeof(path)) ? fopen(path, "rb") : NULL;
+    if (!f) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No cover");
+    }
+    char *buf = malloc(4096);
+    if (!buf) {
+        fclose(f);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400"); /* the page adds the disc ID to the URL */
+    size_t n;
+    esp_err_t err = ESP_OK;
+    while (err == ESP_OK && (n = fread(buf, 1, 4096, f)) > 0) {
+        err = httpd_resp_send_chunk(req, buf, n);
+    }
+    fclose(f);
+    free(buf);
+    return err == ESP_OK ? httpd_resp_send_chunk(req, NULL, 0) : err;
+}
+
 static esp_err_t reboot_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Reboot requested from the web UI");
@@ -333,6 +371,7 @@ esp_err_t web_register(httpd_handle_t server)
         {.uri = "/api/cmd", .method = HTTP_POST, .handler = cmd_handler},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
+        {.uri = "/api/cover", .method = HTTP_GET, .handler = cover_handler},
     };
     for (size_t i = 0; i < WEB_URI_HANDLERS; i++) {
         esp_err_t err = httpd_register_uri_handler(server, &uris[i]);

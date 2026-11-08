@@ -60,6 +60,7 @@ static struct {
     bool has_disc;
     atapi_toc_t toc;
     atapi_cd_text_t *cdtext;
+    player_meta_t *meta;    /* online metadata (heap, PSRAM), fills what CD-TEXT lacks */
     char message[PLAYER_TEXT_LEN];
 
     uint32_t gen;
@@ -457,6 +458,8 @@ void player_load_disc(const atapi_toc_t *toc, atapi_cd_text_t *cdtext)
         atapi_cd_text_free(P.cdtext);
         free(P.cdtext);
     }
+    free(P.meta);
+    P.meta = NULL;
     P.toc = *toc;
     P.cdtext = cdtext;
     P.has_disc = true;
@@ -480,8 +483,21 @@ void player_unload_disc(void)
         free(P.cdtext);
         P.cdtext = NULL;
     }
+    free(P.meta);
+    P.meta = NULL;
     memset(&P.toc, 0, sizeof(P.toc));
     UNLOCK();
+}
+
+void player_set_metadata(player_meta_t *meta)
+{
+    LOCK();
+    free(P.meta);
+    P.meta = P.has_disc ? meta : NULL;
+    UNLOCK();
+    if (!P.has_disc) {
+        free(meta);
+    }
 }
 
 void player_set_message(const char *msg)
@@ -580,6 +596,36 @@ static void copy_text(char *dst, const char *src)
     strlcpy(dst, src ? src : "", PLAYER_TEXT_LEN);
 }
 
+/** CD-TEXT field if present, else the metadata field (may be NULL) */
+static const char *cdtext_or_meta(atapi_cd_text_field_t field, int track, const char *meta_val)
+{
+    const char *v = P.cdtext ? P.cdtext->text[field][track] : NULL;
+    return (v && v[0]) ? v : (meta_val && meta_val[0]) ? meta_val : NULL;
+}
+
+static const char *album_text(void)
+{
+    return cdtext_or_meta(ATAPI_CDTEXT_TITLE, 0, P.meta ? P.meta->album : NULL);
+}
+
+static const char *artist_text(void)
+{
+    return cdtext_or_meta(ATAPI_CDTEXT_PERFORMER, 0, P.meta ? P.meta->artist : NULL);
+}
+
+static const char *track_title(int n)
+{
+    return cdtext_or_meta(ATAPI_CDTEXT_TITLE, n, P.meta ? P.meta->track[n].title : NULL);
+}
+
+/** Track performer, NULL if the same as the album artist */
+static const char *track_performer(int n)
+{
+    const char *perf = cdtext_or_meta(ATAPI_CDTEXT_PERFORMER, n, P.meta ? P.meta->track[n].artist : NULL);
+    const char *artist = artist_text();
+    return (perf && (!artist || strcmp(perf, artist) != 0)) ? perf : NULL;
+}
+
 void player_get_status(player_status_t *st)
 {
     memset(st, 0, sizeof(*st));
@@ -600,16 +646,10 @@ void player_get_status(player_status_t *st)
         st->track_len = atapi_toc_track_length(&P.toc, idx);
         st->disc_len = P.toc.leadout_lba;
 
-        const atapi_cd_text_t *ct = P.cdtext;
-        if (ct) {
-            copy_text(st->album, ct->text[ATAPI_CDTEXT_TITLE][0]);
-            copy_text(st->artist, ct->text[ATAPI_CDTEXT_PERFORMER][0]);
-            copy_text(st->title, ct->text[ATAPI_CDTEXT_TITLE][t->number]);
-            const char *perf = ct->text[ATAPI_CDTEXT_PERFORMER][t->number];
-            if (perf && strcmp(perf, st->artist) != 0) {
-                copy_text(st->performer, perf);
-            }
-        }
+        copy_text(st->album, album_text());
+        copy_text(st->artist, artist_text());
+        copy_text(st->title, track_title(t->number));
+        copy_text(st->performer, track_performer(t->number));
         if (!st->title[0]) {
             snprintf(st->title, PLAYER_TEXT_LEN, "%s %d", atapi_toc_entry_is_data(t) ? "Data track" : "Track",
                      t->number);
@@ -622,17 +662,14 @@ int player_get_tracks(player_track_info_t *out, int max)
 {
     LOCK();
     int n = P.has_disc ? MIN(P.toc.num_tracks, max) : 0;
-    const atapi_cd_text_t *ct = P.cdtext;
-    const char *artist = ct ? ct->text[ATAPI_CDTEXT_PERFORMER][0] : NULL;
     for (int i = 0; i < n; i++) {
         const atapi_toc_entry_t *t = &P.toc.tracks[i];
         player_track_info_t *o = &out[i];
         o->number = t->number;
         o->audio = !atapi_toc_entry_is_data(t);
         o->length = atapi_toc_track_length(&P.toc, i);
-        copy_text(o->title, ct ? ct->text[ATAPI_CDTEXT_TITLE][t->number] : NULL);
-        const char *perf = ct ? ct->text[ATAPI_CDTEXT_PERFORMER][t->number] : NULL;
-        copy_text(o->performer, (perf && (!artist || strcmp(perf, artist) != 0)) ? perf : NULL);
+        copy_text(o->title, track_title(t->number));
+        copy_text(o->performer, track_performer(t->number));
     }
     UNLOCK();
     return n;

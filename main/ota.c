@@ -80,13 +80,29 @@ void ota_confirm_running_app(const char *reason)
     }
 }
 
+const char *ota_reset_reason_name(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "external pin";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    default: return "other";
+    }
+}
+
 void ota_log_boot_info(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
     const esp_partition_t *run = esp_ota_get_running_partition();
     esp_ota_img_states_t state = running_state();
-    ESP_LOGI(TAG, "Firmware %s (%s %s), partition %s, state %s", app->version, app->date, app->time,
-             run->label, ota_state_name(state));
+    ESP_LOGI(TAG, "Firmware %s (%s %s), partition %s, state %s, reset reason: %s", app->version, app->date,
+             app->time, run->label, ota_state_name(state), ota_reset_reason_name());
     if (state == ESP_OTA_IMG_PENDING_VERIFY) {
         ESP_LOGW(TAG, "Firmware not yet confirmed: it will be once Wi-Fi is up, otherwise the next reset rolls back");
     }
@@ -278,6 +294,10 @@ esp_err_t ota_server_start(void)
     cfg.recv_wait_timeout = 10;
     cfg.lru_purge_enable = true;
     cfg.max_uri_handlers = 2 + WEB_URI_HANDLERS;
+    /* Each client connection is an lwIP socket (plus 3 internal ones). Keep sockets free for the outgoing
+     * HTTPS lookups (meta.c): a browser holding keep-alive connections once used them all up. Least recently
+     * used connections are closed when a new client arrives (lru_purge_enable). */
+    cfg.max_open_sockets = 5;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "httpd_start");
 
     const httpd_uri_t uris[] = {

@@ -24,5 +24,8 @@ esp_err_t net_set_credentials(const char *ssid, const char *password);
 
 void net_get_status(net_status_t *st);
 
+/** Associated and has an IP address */
+bool net_is_connected(void);
+
 /** Print network, firmware and storage information to the console */
 void net_print_info(void);

@@ -26,5 +26,8 @@ int ota_progress(void);
 /** OTA state of the running firmware: undefined (cable flash), pending-verify, valid, ... */
 const char *ota_running_state_name(void);
 
+/** Why the chip last reset (power-on, software, panic, watchdog, brownout, ...) */
+const char *ota_reset_reason_name(void);
+
 void ota_log_boot_info(void);
 void ota_print_info(void);

@@ -31,6 +31,7 @@
 #include "ota.h"
 #include "storage.h"
 #include "app.h"
+#include "meta.h"
 
 static const char *TAG = "cd";
 
@@ -125,7 +126,7 @@ static void print_help(void)
     printf("Commands: p=play/pause s=stop n=next b=previous f/r=+/-10s +/-=volume e=eject/load\n"
            "          <number><Enter>=play track, i=status, h=help\n"
            "          a=check I2S pins, t=1 kHz test tone (3 s)\n"
-           "          w=network/firmware info, W=set Wi-Fi credentials\n");
+           "          w=network/firmware info, W=set Wi-Fi credentials, M=look up album info online again\n");
 }
 
 /**
@@ -228,7 +229,8 @@ static void console_task(void *arg)
             break;
         }
         case 'i': break;
-        case 'w': net_print_info(); number = -1; continue;
+        case 'w': net_print_info(); meta_print_info(); number = -1; continue;
+        case 'M': meta_refresh(); number = -1; continue;
         case 'W': configure_wifi(port); number = -1; continue;
         case 'h': print_help(); break;
         default:
@@ -321,7 +323,9 @@ static bool load_disc(atapi_host_device_handle_t dev)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));
     }
+    bool has_cdtext = cdtext != NULL;
     player_load_disc(&toc, cdtext); /* player owns cdtext now */
+    meta_disc_loaded(&toc, has_cdtext); /* cached / online album info and cover */
     if (player_get_autoplay()) { /* start as soon as a disc is loaded (inserted, or present at boot) */
         player_command(PLAYER_CMD_PLAY, 0);
         ESP_LOGI(TAG, "Autoplay");
@@ -348,6 +352,7 @@ void app_main(void)
     storage_init(); /* not fatal: the player works without the cache */
 
     ESP_ERROR_CHECK(player_init());
+    ESP_ERROR_CHECK(meta_init());
     ESP_ERROR_CHECK(ui_init());
     /* After the UI, so the LVGL DMA buffers get internal RAM first. Not fatal: the player works offline */
     err = net_init();
@@ -394,6 +399,7 @@ void app_main(void)
                 if (dev && msg.handle == dev) {
                     ESP_LOGI(TAG, "Optical drive disconnected");
                     player_unload_disc();
+                    meta_disc_unloaded();
                     player_set_device(NULL);
                     atapi_host_uninstall_device(dev);
                     dev = NULL;
@@ -407,6 +413,7 @@ void app_main(void)
                     ESP_LOGI(TAG, "%s tray", tray_open ? "Ejecting" : "Loading");
                     if (tray_open) {
                         player_unload_disc();
+                        meta_disc_unloaded();
                         disc_loaded = false;
                         player_set_message("Ejecting...");
                     } else {
@@ -463,6 +470,7 @@ void app_main(void)
         } else if (state != ESP_OK && disc_loaded) {
             ESP_LOGI(TAG, "Disc removed");
             player_unload_disc();
+            meta_disc_unloaded();
             disc_loaded = false;
         }
     }

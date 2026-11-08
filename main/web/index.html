@@ -23,6 +23,16 @@ header h1 { font-size: 17px; font-weight: 600; margin: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
 .dot.on { background: var(--good); } .dot.off { background: var(--bad); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+.head { display: flex; gap: 14px; align-items: flex-start; }
+.head-text { flex: 1; min-width: 0; }
+.cover-box { position: relative; width: 96px; height: 96px; flex: none; border-radius: 8px; background: var(--line); }
+.cover-box[hidden] { display: none; }
+.cover { width: 96px; height: 96px; border-radius: 8px; object-fit: cover; display: block; }
+.spin { position: absolute; inset: 0; margin: auto; width: 36px; height: 36px; border-radius: 50%;
+        border: 4px solid color-mix(in srgb, var(--dim) 35%, transparent); border-top-color: var(--accent);
+        animation: spin 1s linear infinite; }
+.spin[hidden] { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .album { color: var(--dim); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { font-size: 22px; font-weight: 600; margin: 2px 0 0; overflow-wrap: anywhere; }
 .performer { color: var(--dim); font-size: 14px; }
@@ -85,9 +95,17 @@ progress { width: 100%; accent-color: var(--accent); }
   </header>
 
   <div class="card">
-    <div class="album" id="album">&nbsp;</div>
-    <div class="title" id="title">…</div>
-    <div class="performer" id="performer"></div>
+    <div class="head">
+      <div class="head-text">
+        <div class="album" id="album">&nbsp;</div>
+        <div class="title" id="title">…</div>
+        <div class="performer" id="performer"></div>
+      </div>
+      <div class="cover-box" id="cover-box" hidden>
+        <img class="cover" id="cover" alt="" hidden>
+        <div class="spin" id="spin" title="Looking up album info" hidden></div>
+      </div>
+    </div>
     <div class="meta"><span id="trackno"></span><span id="state"></span></div>
     <div class="bar disabled" id="bar" title="Click to seek"><div id="fill"></div></div>
     <div class="time"><span id="pos">--:--</span><span id="len">--:--</span></div>
@@ -165,6 +183,19 @@ progress { width: 100%; accent-color: var(--accent); }
       </section>
 
       <section>
+        <h2>Album info</h2>
+        <dl>
+          <dt>Source</dt><dd id="m-src">–</dd>
+          <dt>Disc ID</dt><dd id="m-id">–</dd>
+          <dt>Release</dt><dd id="m-rel">–</dd>
+        </dl>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" id="meta-btn">Look up online again</button>
+          <span class="msg">MusicBrainz / Cover Art Archive; CD-TEXT takes precedence</span>
+        </div>
+      </section>
+
+      <section>
         <h2>System</h2>
         <dl>
           <dt>Internal RAM</dt><dd id="s-heap">–</dd>
@@ -237,7 +268,34 @@ function render(s) {
   $("s-fs").textContent = s.sys.fs_total ? `${kib(s.sys.fs_used)} used of ${kib(s.sys.fs_total)}` : "not mounted";
   $("s-idf").textContent = f.idf;
 
-  const key = disc ? `${s.tracks}/${s.disc_len}/${s.album}` : "";
+  const m = s.meta;
+  $("m-src").textContent = disc ? m.state + (m.error ? ` (${m.error})` : "") : "–";
+  $("m-id").textContent = m.discid || "–";
+  const rel = $("m-rel");
+  if (m.release) {
+    const a = document.createElement("a");
+    a.href = "https://musicbrainz.org/release/" + m.release;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = m.release;
+    a.style.color = "var(--accent)";
+    rel.replaceChildren(a);
+  } else {
+    rel.textContent = "–";
+  }
+  $("meta-btn").disabled = !disc;
+  const cover = $("cover");
+  const coverSrc = m.cover ? "/api/cover?d=" + encodeURIComponent(m.discid + "/" + m.release) : "";
+  if (cover.dataset.src !== coverSrc) {
+    cover.dataset.src = coverSrc;
+    if (coverSrc) cover.src = coverSrc; else cover.removeAttribute("src");
+    cover.hidden = !coverSrc;
+  }
+  const lookingUp = disc && m.state === "looking up";
+  $("spin").hidden = !lookingUp;
+  $("cover-box").hidden = !coverSrc && !lookingUp;
+
+  const key = disc ? `${s.tracks}/${s.disc_len}/${s.album}/${m.state}` : "";
   if (key !== discKey) { discKey = key; loadTracks(); }
   document.querySelectorAll("#tracks li").forEach(li => li.classList.toggle("current", disc && +li.dataset.n === s.track));
 }
@@ -298,6 +356,8 @@ vol.addEventListener("input", () => {
   clearTimeout(volTimer);
   volTimer = setTimeout(() => { volTimer = null; cmd("volume", vol.value); }, 120);
 });
+
+$("meta-btn").addEventListener("click", () => cmd("meta"));
 
 $("autoplay").addEventListener("change", e => cmd("autoplay", e.target.checked ? 1 : 0));
 

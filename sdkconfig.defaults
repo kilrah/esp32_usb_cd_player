@@ -45,3 +45,12 @@ CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 # I2S ISR runs while the flash cache is disabled (OTA, LittleFS writes), so auto-clear keeps
 # writing silence on underrun instead of the DMA ring looping its last audio
 CONFIG_I2S_ISR_IRAM_SAFE=y
+
+# HTTPS (MusicBrainz / Cover Art Archive lookups): TLS buffers in PSRAM, internal RAM is tight
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# archive.org (Cover Art Archive redirect target) sends a GoDaddy chain cross-signed by the old Class 2
+# root, which is not in the bundle; this lets the chain end at the bundled Go Daddy G2 root instead
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+# Sockets: the HTTP server takes up to max_open_sockets + 3 (ota.c caps it at 5). With the default of 10,
+# a browser holding keep-alive connections left none for the HTTPS lookups ("Failed to create socket").
+CONFIG_LWIP_MAX_SOCKETS=16
