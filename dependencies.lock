@@ -95,16 +95,11 @@ dependencies:
       type: local
     version: '*'
   usb_host_atapi:
-    dependencies:
-    - name: idf
-      version: '>=6.0'
-    - name: espressif/usb
-      public: true
-      version: ^1.0.0
+    dependencies: []
     source:
       path: components/usb_host_atapi
       type: local
-    version: '*'
+    version: 0.1.0
 direct_dependencies:
 - espressif/cjson
 - espressif/esp_jpeg
@@ -116,6 +111,6 @@ direct_dependencies:
 - lvgl/lvgl
 - tdisplay_s3
 - usb_host_atapi
-manifest_hash: 5be32d9bc9bcfcaf98f110152e85ec7c457e5aed0daa6adad05962c7d6f3e401
+manifest_hash: 90551caed514f1cf409122b01824792bbe46e0f2884e1da9e05c1e787accfaa9
 target: esp32s3
 version: 3.0.0
