@@ -15,10 +15,10 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | CD-TEXT (album/track titles, artists, UPC, ISRC) | Working |
 | Raw CD-DA audio reads (READ CD) | Working, ~3.8x realtime (~650 KiB/s) |
 | Eject / load, error recovery (STALL, timeouts, BOT reset) | Working |
-| Status LED (WS2812B) | Working |
+| Status LED (WS2812B) | Worked on the old N16R8 devkit; **disabled** on the T-Display S3 (no WS2812) |
 | I2S DAC output | **Not started** |
 | Display / buttons UI | **Not started** |
-| Final board: partition table, flash QIO mode | **Pending.** The current board is a prototype |
+| Final board: partition table, flash QIO mode | **Pending.** The T-Display S3 is still a prototype setup |
 
 Verified with an **HP BD ROM BC-5501H** (slim SATA BD drive) behind an **Initio** USB bridge
 (VID 0x13fd, PID 0x0840, interface subclass 0x02 / ATAPI, Bulk-Only), using a pressed audio CD with
@@ -26,15 +26,21 @@ CD-TEXT (Lorde, *Virgin*, 11 tracks).
 
 ## Hardware (current prototype)
 
+**Board: LilyGO T-Display S3** (ESP32-S3R8, 16 MB flash, 8 MB octal PSRAM, chip rev v0.2, 1.9" ST7789 LCD with an 8-bit parallel bus).
+The board has no USB-serial converter, so an external FTDI adapter is used for the console.
+
 | Item | Detail |
 |---|---|
-| MCU board | ESP32-S3 **N16R8** (16 MB quad flash, 8 MB octal PSRAM), chip rev v0.2 |
-| Console / flashing | UART port, **COM22** (GPIO43/44) |
-| USB Host | Native USB connector (GPIO19/20), full speed only (12 Mbit/s) |
-| Status LED | WS2812B on **GPIO48** |
-| Button | BOOT (**GPIO0**): eject / load the tray |
-| Power | The board is powered externally. The **fuse on the host connector's VBUS line was removed or bypassed**: its voltage drop browned out the drive during spin-up, so the drive kept dropping off the bus in a loop |
-| Reserved pins | GPIO33-37 are used by the octal PSRAM; do not use them |
+| USB Host | Native USB-C connector (GPIO19/20), full speed only (12 Mbit/s). The drive is plugged in here |
+| Console (logs) | External FTDI adapter on **COM23**: board **TX = GPIO16**, **RX = GPIO21**, 115200 baud. The pin silkscreen is cut off and misleading (it looks like "1/2") |
+| Flashing | **Only through the native USB port in download mode** (see below). The FTDI on GPIO16/21 cannot flash: the ROM bootloader only uses GPIO43/44 or native USB |
+| Buttons | BOOT (**GPIO0**) = eject / load the tray. GPIO14 = second button, still unused |
+| LCD | 8-bit parallel ST7789: D0-D7 = GPIO39-42, 45-48. **GPIO48 is LCD D7**, so the WS2812 status LED is disabled (`STATUS_LED_PIN -1` in `cd_player_main.c`) |
+| Reserved pins | GPIO33-37 are used by the octal PSRAM |
+| Drive power | Needs a 5 V supply that can deliver the spin-up current. **Don't use a power bank**: power banks short the USB data lines to signal fast-charge capability, which breaks the connection to the drive |
+
+Earlier prototype: an ESP32-S3 N16R8 devkit (UART console on COM22, WS2812 on GPIO48). Its fuse on the
+host connector's VBUS line dropped too much voltage and browned out the drive during spin-up; it had to be bypassed.
 
 ## Building and flashing
 
@@ -45,8 +51,18 @@ doesn't exist). Activate the environment with the EIM profile script instead:
 ```powershell
 . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
 idf.py build
-idf.py -p COM22 flash monitor
+idf.py -p COM17 flash        # native USB in download mode, see below
+idf.py -p COM23 monitor      # logs via the FTDI adapter
 ```
+
+**Flashing the T-Display S3:** the running firmware uses the native USB port as USB Host, so no
+serial port is exposed there. To flash:
+
+1. Unplug the drive and connect the native USB-C port to the PC.
+2. Hold **BOOT**, press and release **RST**, then release BOOT. The ROM's USB serial port appears
+   (VID 0x303A, PID 0x1001; it was **COM17**).
+3. Run `idf.py -p COM17 flash`. esptool hard-resets the board into the new firmware at the end.
+4. Reconnect the drive. Logs are on COM23.
 
 Dependencies (managed components): `espressif/usb` (USB Host library, external since IDF 6.0) and
 `espressif/led_strip`.
@@ -99,11 +115,12 @@ blue blinking that never ends.
 
 ## Known issues / gotchas
 
-- **GPIO0 glitch from the serial port.** The auto-program circuit pulls GPIO0 (BOOT) low briefly whenever
-  something opens COM22 and toggles DTR/RTS (esptool, monitors, pyserial with default settings).
-  The firmware ignores presses shorter than 50 ms. Before that filter existed, opening the port ejected the disc.
-  When capturing logs with pyserial, set `dtr = rts = False` **before** `open()`. The final hardware
-  should use dedicated button GPIOs, not GPIO0.
+- **GPIO0 glitch from the serial port** (old N16R8 devkit). Its auto-program circuit pulled GPIO0 (BOOT)
+  low briefly whenever something opened the UART port and toggled DTR/RTS, and the old firmware ejected the disc.
+  The firmware now ignores presses shorter than 50 ms. On the T-Display S3 the FTDI only has TX/RX/GND
+  connected, so this doesn't apply, but keep the filter in place. The final hardware should use dedicated button GPIOs, not GPIO0.
+- **Resetting the T-Display S3 remotely isn't possible.** The FTDI has no DTR/RTS wiring, and the native port is
+  in USB Host mode. Press RST to see the boot log on COM23. When the app is idle it logs only on state changes.
 - **First contact after an ESP reset** (drive stays powered) can take a while if the drive is busy.
   INQUIRY retries every 3 s for up to ~60 s and logs `Drive not responding yet`.
 - **Spin-up latency.** The first read after the disc spins down takes ~3 s.

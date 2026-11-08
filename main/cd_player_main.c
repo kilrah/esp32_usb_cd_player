@@ -29,7 +29,7 @@
 static const char *TAG = "cd";
 
 #define BUTTON_PIN          GPIO_NUM_0  /* BOOT button: eject / load */
-#define STATUS_LED_PIN      48          /* On-board WS2812B */
+#define STATUS_LED_PIN      -1          /* No WS2812 on the T-Display S3 (GPIO48 is LCD D7). -1 = disabled */
 #define READ_CHUNK_SECTORS  16          /* sectors per read call (37632 bytes) */
 #define TEST_READ_SECONDS   5
 
@@ -259,7 +259,7 @@ void app_main(void)
     s_queue = xQueueCreate(8, sizeof(app_msg_t));
     assert(s_queue);
 
-    if (status_led_init(STATUS_LED_PIN) != ESP_OK) {
+    if (STATUS_LED_PIN >= 0 && status_led_init(STATUS_LED_PIN) != ESP_OK) {
         ESP_LOGW(TAG, "Status LED not available");
     }
 
