@@ -33,7 +33,7 @@ typedef enum {
  * overdrives the downstream amplifier. Gain = (volume/100)^2, so 50 % = -12 dB.
  * The user sees the volume scaled so that PLAYER_VOLUME_MAX = 100 % (see player_volume_display()). */
 #define PLAYER_VOLUME_MAX   50
-#define PLAYER_VOLUME_STEP  1   /* internal units; 10 % on the display with MAX = 50 */
+#define PLAYER_VOLUME_STEP  1   /* internal units; 2 % on the display with MAX = 50 */
 
 /** Volume as shown to the user: 0..100 %, where 100 % = PLAYER_VOLUME_MAX */
 static inline int player_volume_display(int volume)

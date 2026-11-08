@@ -16,7 +16,7 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | Raw CD-DA audio reads (READ CD) | Working, ~3.8x realtime (~650 KiB/s) max; drive set to 4x |
 | Eject / load, error recovery (STALL, timeouts, BOT reset) | Working |
 | I2S output to PCM5102 | Working: gapless across tracks, 0 underruns in testing. Needs the module's solder bridges set (see below) |
-| Transport: play/pause, stop, next/prev, seek, track select, volume | Working (serial commands; physical buttons to be added) |
+| Transport: play/pause, stop, next/prev, seek, track select, volume | Working (serial commands; physical buttons to be added). Autoplay on disc load; volume persisted in NVS |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
 | De-emphasis for pre-emphasis tracks | Not implemented |
@@ -93,13 +93,14 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 |---|---|
 | [main/cd_player_main.c](main/cd_player_main.c) | Drive connect/disconnect, disc polling (TEST UNIT READY every 1 s), TOC/CD-TEXT loading, eject/load, serial commands |
 | [main/player.c](main/player.c) | Playback engine: a reader task fills 12 × 16-sector chunks (~2.5 s, 450 KB, `NUM_CHUNKS`) in PSRAM; a writer task streams them to I2S in 2-sector slices, applies the volume and tracks the position and the buffered sector count. A generation counter drops stale chunks on seek/stop/unload. Plays continuously across tracks, skips data tracks, stops at the lead-out. Reads are retried 3×; slow (>500 ms) and failed reads are logged |
-| [main/player.h](main/player.h) | Player API, status snapshot, volume cap (`PLAYER_VOLUME_MAX`, `PLAYER_VOLUME_STEP`, `player_volume_display()`) |
+| [main/player.h](main/player.h) | Player API, status snapshot, volume cap (persisted in NVS by `player.c`) (`PLAYER_VOLUME_MAX`, `PLAYER_VOLUME_STEP`, `player_volume_display()`) |
 | [main/audio_out.c](main/audio_out.c) | I2S0 master, 44.1 kHz, 16-bit stereo, Philips format, MCLK = 256·fs. DMA auto-clear outputs silence on pause or underrun. Pin check and test-tone diagnostics |
 | [main/ui.c](main/ui.c) | LVGL screen, refreshed every 200 ms from a `player_get_status()` snapshot (runs in the LVGL task) |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
 
 On disc load the drive is set to 4x (`SET CD SPEED`) for less noise. CD audio needs 1x.
-A newly loaded disc starts in **stopped** state; press play.
+A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up
+(`AUTOPLAY_ON_LOAD` in `cd_player_main.c`; set it to 0 to start stopped instead).
 
 ### Controls
 
@@ -115,7 +116,7 @@ buttons will be added later. An earlier, uncommitted version used the two onboar
 | `s` | Stop |
 | `n` / `b` | Next / previous track |
 | `f` / `r` | Seek +10 s / -10 s |
-| `+` / `-` | Volume ±10 % as displayed (0-100 %, where 100 % = the internal cap; see below) |
+| `+` / `-` | Volume ±2 % as displayed (0-100 %, where 100 % = the internal cap; see below) |
 | `e` | Eject / load |
 | `<number>` Enter | Play track number |
 | `i` | Print status |
@@ -138,7 +139,9 @@ python tools/sercmd.py COM23 6 "0.5:p" "5:i"     # '~' in a command is sent as E
 
 The volume is capped internally at `PLAYER_VOLUME_MAX` = 50 (`player.h`), which is -12 dB with the quadratic gain curve
 (gain = (v/100)²). The display and the status line scale it so that the cap shows as **100 %**; one step
-(`PLAYER_VOLUME_STEP` = 5) is 10 % on the display. Playback starts at the cap. The PCM5102 outputs about 2.1 V RMS at full
+(`PLAYER_VOLUME_STEP` = 1) is 2 % on the display. The volume is stored in NVS (namespace `player`, key `volume`,
+2 s after the last change, so repeated steps cause a single flash write) and restored at boot, clamped to the current cap;
+without a stored value it starts at the cap. The PCM5102 outputs about 2.1 V RMS at full
 scale, which overdrives the downstream amplifier; the digital volume itself only attenuates.
 
 ### PCM5102 module setup

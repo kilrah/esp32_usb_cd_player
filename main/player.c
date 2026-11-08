@@ -21,6 +21,7 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "nvs.h"
 #include "player.h"
 #include "audio_out.h"
 
@@ -33,6 +34,9 @@ static const char *TAG = "player";
 #define READ_RETRIES    3
 #define PREV_RESTART_SECTORS (3 * ATAPI_CD_FRAMES_PER_SECOND)
 #define SLOW_READ_MS    500                                 /* log reads slower than this */
+#define NVS_NAMESPACE   "player"
+#define NVS_KEY_VOLUME  "volume"
+#define VOLUME_SAVE_DELAY_MS 2000                           /* debounce NVS writes */
 
 typedef struct {
     uint8_t *data;
@@ -63,6 +67,7 @@ static struct {
     bool reader_done;       /* reached the end of the playable area */
     bool primed;            /* audio has been played since the last seek (for underrun counting) */
     uint32_t buffered;      /* sectors read ahead and not yet sent to I2S (current generation) */
+    esp_timer_handle_t volume_save_timer;
     int volume;
     uint32_t underruns;
     uint32_t read_errors;
@@ -309,6 +314,59 @@ static void writer_task(void *arg)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Volume persistence (NVS)                                                 */
+/* ------------------------------------------------------------------------ */
+
+static int volume_load(void)
+{
+    nvs_handle_t nvs;
+    uint8_t v = PLAYER_VOLUME_MAX;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+        if (nvs_get_u8(nvs, NVS_KEY_VOLUME, &v) != ESP_OK) {
+            v = PLAYER_VOLUME_MAX;
+        }
+        nvs_close(nvs);
+    }
+    int volume = MIN((int)v, PLAYER_VOLUME_MAX); /* the cap may have been lowered since it was saved */
+    ESP_LOGI(TAG, "Volume %d%% (stored %d, max %d)", player_volume_display(volume), v, PLAYER_VOLUME_MAX);
+    return volume;
+}
+
+/* Runs in the esp_timer task, VOLUME_SAVE_DELAY_MS after the last volume change */
+static void volume_save_cb(void *arg)
+{
+    LOCK();
+    uint8_t v = (uint8_t)P.volume;
+    UNLOCK();
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        uint8_t old;
+        if (nvs_get_u8(nvs, NVS_KEY_VOLUME, &old) != ESP_OK || old != v) {
+            err = nvs_set_u8(nvs, NVS_KEY_VOLUME, v);
+            if (err == ESP_OK) {
+                err = nvs_commit(nvs);
+            }
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Saving volume failed: %s", esp_err_to_name(err));
+    }
+}
+
+/** Change the volume and schedule saving it (call with lock held) */
+static void volume_change_locked(int delta)
+{
+    int v = MIN(PLAYER_VOLUME_MAX, MAX(0, P.volume + delta));
+    if (v != P.volume) {
+        P.volume = v;
+        esp_timer_stop(P.volume_save_timer); /* restart the debounce period */
+        esp_timer_start_once(P.volume_save_timer, VOLUME_SAVE_DELAY_MS * 1000);
+    }
+}
+
+/* ------------------------------------------------------------------------ */
 /* API                                                                      */
 /* ------------------------------------------------------------------------ */
 
@@ -326,8 +384,14 @@ esp_err_t player_init(void)
         xQueueSend(P.free_q, &c, 0);
     }
     P.state = PLAYER_NO_DISC;
-    P.volume = PLAYER_VOLUME_MAX;
+    P.volume = volume_load();
     strlcpy(P.message, "Waiting for drive", sizeof(P.message));
+
+    const esp_timer_create_args_t save_timer_args = {
+        .callback = volume_save_cb,
+        .name = "vol_save",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&save_timer_args, &P.volume_save_timer), TAG, "timer");
 
     ESP_RETURN_ON_ERROR(audio_out_init(), TAG, "audio");
     xTaskCreate(reader_task, "cd_reader", 4096, NULL, 6, &P.reader_task);
@@ -390,7 +454,7 @@ void player_command(player_cmd_t cmd, int arg)
 {
     LOCK();
     if (cmd == PLAYER_CMD_VOLUME_REL) { /* allowed without a disc */
-        P.volume = MIN(PLAYER_VOLUME_MAX, MAX(0, P.volume + arg));
+        volume_change_locked(arg);
         UNLOCK();
         return;
     }
@@ -456,8 +520,7 @@ void player_command(player_cmd_t cmd, int arg)
         break;
     }
     case PLAYER_CMD_VOLUME_REL:
-        P.volume = MIN(PLAYER_VOLUME_MAX, MAX(0, P.volume + arg));
-        break;
+        break; /* handled above */
     }
     UNLOCK();
     xTaskNotifyGive(P.reader_task);

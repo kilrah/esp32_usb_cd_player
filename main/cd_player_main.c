@@ -2,7 +2,7 @@
  * USB CD player (LilyGO T-Display S3 + USB optical drive + PCM5102 I2S DAC)
  *
  * - Detects an optical drive on the USB Host port, waits for an audio CD
- * - Reads TOC and CD-TEXT, streams CD-DA to the I2S DAC (player.c)
+ * - Reads TOC and CD-TEXT, starts playing (AUTOPLAY_ON_LOAD), streams CD-DA to the I2S DAC (player.c)
  * - Shows track info / transport state on the display (ui.c)
  * - Controlled via serial commands on the console UART (type 'h' for help);
  *   physical buttons will be added later
@@ -20,6 +20,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "driver/uart.h"
+#include "nvs_flash.h"
 #include "usb/usb_host.h"
 #include "usb/atapi_host.h"
 #include "player.h"
@@ -29,6 +30,7 @@
 static const char *TAG = "cd";
 
 #define CD_READ_SPEED_KBPS  (4 * ATAPI_SPEED_1X_KBPS)  /* 4x: plenty of margin, less noise than max */
+#define AUTOPLAY_ON_LOAD    1   /* start playing as soon as a disc is loaded (inserted, or present at boot) */
 
 typedef enum {
     APP_DEVICE_CONNECTED,
@@ -261,6 +263,10 @@ static bool load_disc(atapi_host_device_handle_t dev)
         ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));
     }
     player_load_disc(&toc, cdtext); /* player owns cdtext now */
+#if AUTOPLAY_ON_LOAD
+    player_command(PLAYER_CMD_PLAY, 0);
+    ESP_LOGI(TAG, "Autoplay");
+#endif
     return true;
 }
 
@@ -270,6 +276,15 @@ void app_main(void)
 {
     s_queue = xQueueCreate(8, sizeof(app_msg_t));
     assert(s_queue);
+
+    /* NVS holds the persistent settings (volume) */
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition needs erasing (%s), settings are reset", esp_err_to_name(err));
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(player_init());
     ESP_ERROR_CHECK(ui_init());
