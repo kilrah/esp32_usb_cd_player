@@ -36,7 +36,6 @@
 
 static const char *TAG = "cd";
 
-#define CD_READ_SPEED_KBPS  (4 * ATAPI_SPEED_1X_KBPS)  /* 4x: plenty of margin, less noise than max */
 #define TRANSPORT_FAILURES_HUNG 2 /* consecutive polls failing at the USB/BOT level (each ~10 s): drive hung */
 
 typedef enum {
@@ -344,12 +343,8 @@ static bool load_disc(atapi_host_device_handle_t dev)
         return true;
     }
 
-    err = atapi_host_set_speed(dev, CD_READ_SPEED_KBPS);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));
-    }
     bool has_cdtext = cdtext != NULL;
-    player_load_disc(&toc, cdtext); /* player owns cdtext now */
+    player_load_disc(&toc, cdtext); /* player owns cdtext now; also sets the read speed */
     meta_disc_loaded(&toc, has_cdtext); /* cached / online album info and cover */
     if (player_get_autoplay()) { /* start as soon as a disc is loaded (inserted, or present at boot) */
         player_command(PLAYER_CMD_PLAY, 0);

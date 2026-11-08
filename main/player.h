@@ -88,6 +88,13 @@ void player_command(player_cmd_t cmd, int arg);
 bool player_is_spun_down(void);
 
 /** Apply the de-emphasis filter to all tracks, flagged or not (to audition / test it; not persisted) */
+#define PLAYER_SPEED_CD_SPEED  0x01 /* SET CD SPEED */
+#define PLAYER_SPEED_STREAMING 0x02 /* SET STREAMING */
+
+/** Set the drive read speed (kB/s, 176 = 1x, 0 = max) and the commands used for it; applied now and after each
+ *  spin-up. Not saved (test). Default: 4x via SET CD SPEED. */
+void player_set_read_speed(uint16_t kbps, uint8_t methods);
+
 void player_force_deemphasis(bool on);
 bool player_deemphasis_forced(void);
 void player_get_status(player_status_t *st);

@@ -30,11 +30,13 @@ static const char *TAG = "player";
 
 #define CHUNK_SECTORS   16                                  /* one READ CD command */
 #define CHUNK_BYTES     (CHUNK_SECTORS * ATAPI_CD_AUDIO_SECTOR_SIZE)
-#define NUM_CHUNKS      12                                  /* ~2.5 s read-ahead, 450 KB PSRAM */
+#define NUM_CHUNKS      40                                  /* ~8 s read-ahead, 1500 KB PSRAM: slipping discs
+                                                               recover slowly after a full spin-down */
 #define SLICE_SECTORS   2                                   /* I2S write granularity (~27 ms) */
 #define READ_RETRIES    3
 #define PREV_RESTART_SECTORS (3 * ATAPI_CD_FRAMES_PER_SECOND)
 #define SLOW_READ_MS    500                                 /* log reads slower than this */
+#define READ_SPEED_KBPS (4 * ATAPI_SPEED_1X_KBPS)          /* 4x: plenty of margin, less noise than max */
 #define SPINDOWN_S      120                                 /* stop the drive motor after this long without playback */
 #define NVS_NAMESPACE   "player"
 #define NVS_KEY_VOLUME  "volume"
@@ -69,6 +71,8 @@ static struct {
     uint32_t read_lba;      /* next sector to read */
     uint32_t play_lba;      /* sector currently being played */
     bool reader_done;       /* reached the end of the playable area */
+    uint16_t speed_kbps;    /* read speed limit, 0 = drive maximum */
+    uint8_t speed_methods;  /* PLAYER_SPEED_* bits: which commands set it */
     bool spun_down;         /* drive motor stopped by us (power saving); spun up again before reading */
     int64_t idle_since;     /* esp_timer time playback stopped/paused, 0 while playing */
     bool primed;            /* audio has been played since the last seek (for underrun counting) */
@@ -172,6 +176,37 @@ static void seek_locked(uint32_t lba)
 /* ------------------------------------------------------------------------ */
 
 /** Spin the drive down after SPINDOWN_S without playback, and up again before reading (reader task) */
+/** Limit the read speed (call with dev_lock held). Drives differ in which command they honour: SET CD SPEED
+ *  (older drives) and/or SET STREAMING (MMC-3+); P.speed_methods selects them (test command "speed").
+ *  Some drives forget the setting after a spin-down, so this is repeated after each spin-up. */
+static void apply_read_speed(void)
+{
+    uint32_t end = P.toc.leadout_lba ? P.toc.leadout_lba - 1 : 0;
+    uint16_t kbps = P.speed_kbps ? P.speed_kbps : ATAPI_SPEED_MAX;
+    const char *r1 = "-", *r2 = "-";
+    if (P.speed_methods & PLAYER_SPEED_CD_SPEED) {
+        r1 = esp_err_to_name(atapi_host_set_speed(P.dev, kbps));
+    }
+    if (P.speed_methods & PLAYER_SPEED_STREAMING) {
+        r2 = esp_err_to_name(atapi_host_set_streaming(P.dev, end, P.speed_kbps ? kbps : 0xFFFF));
+    }
+    uint16_t cur = 0, max = 0;
+    esp_err_t e3 = atapi_host_get_speed(P.dev, &cur, &max);
+    ESP_LOGI(TAG, "Read speed %u kB/s: SET CD SPEED %s, SET STREAMING %s; drive reports%s cur %u max %u kB/s",
+             kbps, r1, r2, e3 == ESP_OK ? "" : " (no page 2Ah)", cur, max);
+}
+
+void player_set_read_speed(uint16_t kbps, uint8_t methods)
+{
+    xSemaphoreTake(P.dev_lock, portMAX_DELAY);
+    P.speed_kbps = kbps;
+    P.speed_methods = methods;
+    if (P.dev && P.has_disc) {
+        apply_read_speed();
+    }
+    xSemaphoreGive(P.dev_lock);
+}
+
 static void manage_spindown(bool want_read)
 {
     LOCK();
@@ -196,6 +231,9 @@ static void manage_spindown(bool want_read)
         ESP_LOGI(TAG, "Drive %s: %s (%lld ms)", spin_up ? "spin-up" : "spin-down (idle)", esp_err_to_name(err),
                  (esp_timer_get_time() - t0) / 1000);
         P.spun_down = spin_down; /* even on error: a read spins the drive up anyway, or fails visibly */
+        if (spin_up) {
+            apply_read_speed();
+        }
     }
     xSemaphoreGive(P.dev_lock);
 }
@@ -253,6 +291,7 @@ static void reader_task(void *arg)
                     ESP_LOGI(TAG, "Drive not spinning (%s), starting it", atapi_sense_to_str(&sense));
                     atapi_host_start_stop(P.dev, true, false);
                     P.spun_down = false;
+                    apply_read_speed();
                     err = atapi_host_read_cd_audio(P.dev, lba, n, c->data);
                 }
                 if (err != ESP_OK) {
@@ -509,6 +548,8 @@ esp_err_t player_init(void)
 {
     P.lock = xSemaphoreCreateMutex();
     P.dev_lock = xSemaphoreCreateMutex();
+    P.speed_kbps = READ_SPEED_KBPS;
+    P.speed_methods = PLAYER_SPEED_CD_SPEED;
     P.free_q = xQueueCreate(NUM_CHUNKS, sizeof(chunk_t *));
     P.filled_q = xQueueCreate(NUM_CHUNKS, sizeof(chunk_t *));
     ESP_RETURN_ON_FALSE(P.lock && P.dev_lock && P.free_q && P.filled_q, ESP_ERR_NO_MEM, TAG, "");
@@ -565,6 +606,11 @@ void player_load_disc(const atapi_toc_t *toc, atapi_cd_text_t *cdtext)
     int first = first_audio_track(0);
     seek_locked(first >= 0 ? toc->tracks[first].lba : 0);
     UNLOCK();
+    xSemaphoreTake(P.dev_lock, portMAX_DELAY);
+    if (P.dev) {
+        apply_read_speed();
+    }
+    xSemaphoreGive(P.dev_lock);
 }
 
 void player_unload_disc(void)

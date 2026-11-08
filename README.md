@@ -199,7 +199,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
 
-On disc load the drive is set to 4x (`SET CD SPEED`) for less noise. CD audio needs 1x.
+On disc load and after each spin-up the drive is set to 4x (`SET CD SPEED`) for less noise; the log line `Read speed ...` shows the result and the speed the drive reports. CD audio needs 1x. `SET STREAMING` (the MMC-3 alternative) is implemented but off by default: the TSSTcorp SH-S182M took it as "full speed". For trying other drives: `api/cmd?c=speed&v=<kB/s, 176 = 1x, 0 = max>&m=<1 SET CD SPEED, 2 SET STREAMING, 3 both>`, applied at once, not saved.
 A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up.
 This is the *Autoplay* setting in the web UI (NVS namespace `player`, key `autoplay`, default on).
 
@@ -263,7 +263,7 @@ The JSON API can also be used by scripts:
 | `GET /api/status` | Player state, position/length in seconds, volume (%), buffer, counters, CD-TEXT, Wi-Fi, firmware (version, ELF hash prefix, partition, OTA state, uptime), memory, storage |
 | `GET /api/cover` | Cover art of the current disc (cached JPEG), 404 if none |
 | `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
-| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `setup_ap&v=1/0`. Returns the status |
+| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `setup_ap&v=1/0`, `speed&v=<kB/s>&m=<1-3>` (test, see above). Returns the status |
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
 | `GET /api/wifi/scan` | Nearby networks `[{"ssid", "rssi", "open"}]`, strongest first (takes ~2 s) |
 | `POST /api/reboot` | Restart |
