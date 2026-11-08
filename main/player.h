@@ -43,7 +43,7 @@ static inline int player_volume_display(int volume)
     return (volume * 100 + PLAYER_VOLUME_MAX / 2) / PLAYER_VOLUME_MAX;
 }
 
-#define PLAYER_TEXT_LEN 64
+#define PLAYER_TEXT_LEN 128  /* bytes of UTF-8: accented text takes 2-3 bytes per character */
 
 /** Snapshot of the player state for the UI (all strings UTF-8, never NULL) */
 typedef struct {

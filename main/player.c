@@ -700,9 +700,19 @@ void player_command(player_cmd_t cmd, int arg)
     xTaskNotifyGive(P.writer_task);
 }
 
+/** Copy UTF-8 text, truncated to PLAYER_TEXT_LEN at a character boundary (never mid-sequence) */
 static void copy_text(char *dst, const char *src)
 {
-    strlcpy(dst, src ? src : "", PLAYER_TEXT_LEN);
+    src = src ? src : "";
+    size_t n = strlen(src);
+    if (n >= PLAYER_TEXT_LEN) {
+        n = PLAYER_TEXT_LEN - 1;
+        while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80) {
+            n--; /* src[n] continues a sequence: cut before the sequence's first byte */
+        }
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
 }
 
 /** CD-TEXT field if present, else the metadata field (may be NULL) */
