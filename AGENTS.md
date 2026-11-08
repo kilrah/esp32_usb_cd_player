@@ -2,6 +2,7 @@ This project started from Espressif's USB Host MSC example. The MSC driver has b
 The goal of this project is to be able to read an audio CD using a drive connected to the USB Host port instead of a flash drive. The audio will then be fed into an i2s DAC and offer a user interface with a display and buttons.
 
 Current state: a working CD player (I2S output to a PCM5102, LVGL UI on the T-Display S3, controlled by serial commands; physical buttons to come).
+Wi-Fi with OTA firmware updates and a LittleFS partition for cached metadata have been added (see README).
 See [README.md](README.md) for the status, hardware/pinout, controls and next steps, and
 [components/usb_host_atapi/README.md](components/usb_host_atapi/README.md) for the driver design.
 
@@ -13,20 +14,29 @@ See [README.md](README.md) for the status, hardware/pinout, controls and next st
   GPIO43/44/18/17. The pinout is in the README; check it for conflicts before assigning new pins (the LCD uses many).
   - **Console:** external FTDI on **COM23** (board TX = GPIO16, RX = GPIO21). The FTDI has no DTR/RTS wiring, so the agent
     can't reset the board. Ask the user to press RST when the boot log is needed.
-  - **Driving the app from the agent:** the firmware has single-key serial commands (`p s n b f r + - e i a t h`, `<number>` Enter).
+  - **Driving the app from the agent (preferred): the HTTP API**, so COM23 stays free for the user. `curl
+    http://cdplayer.local/api/status` (or the IP; Python `requests`/`urllib` also work), `curl -X POST
+    "http://cdplayer.local/api/cmd?c=next"`; see the README's Web UI section. Read the volume first, and never
+    raise it in tests. `volume` is the displayed percent, and the user listens at a low level.
+    Serial is still needed for logs (boot log, warnings) and for `a`/`t` diagnostics.
+  - **Serial commands:** the firmware has single-key serial commands (`p s n b f r + - e i a t h`, `<number>` Enter).
     `a` measures the I2S pin frequencies, `t` plays a 1 kHz tone.
     Each command prints a `STATUS ...` line. This is the way to test playback without the user pressing buttons.
     Use `python tools/sercmd.py COM23 <seconds> "<at>:<keys>" ...` (`~` = Enter). Don't send a literal backslash-n:
     it gets executed as `\` (ignored) followed by `n` = next track. COM23 is often open in the user's own monitor;
     "Access denied" means you should ask them to close it.
-  - **Flashing:** only via native USB in download mode. Ask the user to unplug the drive, plug in the PC, and hold BOOT while pressing RST;
+  - **Flashing over Wi-Fi (preferred):** `idf.py build` then `python tools/ota.py` (host `cdplayer.local`, or pass the IP).
+    It verifies that the new ELF SHA-256 is running. Needs Wi-Fi credentials on the device (`W` command, or check with `w`).
+    No user action needed. Bootloader or partition table changes still need a cable flash.
+  - **Flashing by cable:** only via native USB in download mode. Ask the user to unplug the drive, plug in the PC, and hold BOOT while pressing RST;
     the port appears as VID 0x303A PID 0x1001 (it was COM17). Then run `idf.py -p COM17 flash`. Poll for the port with
     `Get-CimInstance Win32_PnPEntity` instead of guessing the COM number. **After flashing, the board stayed in download mode**
     (COM17 still present) even though esptool reported a hard reset. The user has to press RST.
 - **Serial capture:** `tools/sercmd.py` already does this right: DTR/RTS low **before** `open()`, and UTF-8 stdout,
   because the Windows console encoding crashes on log bytes. `idf.py monitor` is interactive and not usable from the agent shell.
-- **Flash cycle cost:** every flash needs the user (unplug drive, BOOT+RST, RST afterwards, replug drive). Batch changes
-  and build-check them before asking for a flash. Fixes that are built but not flashed should be mentioned to the user.
+- **Flash cycle cost:** a cable flash needs the user (unplug drive, BOOT+RST, RST afterwards, replug drive); OTA doesn't.
+  Still build-check changes before uploading. Fixes that are built but not flashed should be mentioned to the user.
+  A new OTA firmware that never reaches Wi-Fi is rolled back on the next reset (ask the user to press RST).
 - **Drive power:** no power banks; they short the USB data lines for fast-charge signalling. If the drive enumerates and then
   drops off, or never shows up, suspect power first.
 - **Test discs:** the user swaps discs, so check the TOC with `i` first. The reference disc is Lorde, *Virgin*
@@ -48,9 +58,16 @@ See [README.md](README.md) for the status, hardware/pinout, controls and next st
     sent stale cache content. The buffers are now in internal DMA RAM (`buff_dma` in `tdisplay_s3.c`); keep them there.
   - Buffer gauge stayed full for several seconds when the disc was blocked, then emptied fast: the drive's own
     read-ahead cache keeps serving reads. Not a bug; the user is fine with the 2.5 s buffer.
+  - READ TOC timed out (30 s, then BOT reset, forever) on a JMicron USB-IDE bridge (152d:2338): it can't handle
+    an allocation length larger than the reply. READ TOC now reads the header first, then the exact length.
+    Do the same for any new variable-length command. See the component README.
+  - Eject didn't close an open tray (JLMS desktop drive): with the tray open it reports the generic sense 02/3A/00,
+    not 3A/02, so polling reset the tray flag. The tray state now comes from GET EVENT STATUS NOTIFICATION
+    when the sense is ambiguous. The HP laptop drive can't close its tray at all; that's normal.
   - Every CSW timed out forever after an error: data toggle desync after CLEAR_FEATURE. This is fixed in
     `clear_halt()`; see the component README.
 - Don't modify `managed_components/`: it is regenerated by the component manager. Work around library issues
   in our own components.
-- The app is ~650 KB in a 1 MB partition. Changing the partition table is deferred to the final board, but the app will outgrow it soon.
-- Not yet done, deliberately (prototype board): partition table, QIO flash mode. Final button GPIOs are unknown.
+- The app is ~1.4 MB in a 2.5 MB OTA slot (`partitions.csv`). Don't move `nvs` (settings and Wi-Fi credentials live there).
+- `sdkconfig` is generated: put settings in `sdkconfig.defaults` (target is pinned there), delete `sdkconfig` to regenerate.
+- Not yet done, deliberately (prototype board): QIO flash mode. Final button GPIOs are unknown.

@@ -36,6 +36,7 @@ static const char *TAG = "player";
 #define SLOW_READ_MS    500                                 /* log reads slower than this */
 #define NVS_NAMESPACE   "player"
 #define NVS_KEY_VOLUME  "volume"
+#define NVS_KEY_AUTOPLAY "autoplay"
 #define VOLUME_SAVE_DELAY_MS 2000                           /* debounce NVS writes */
 
 typedef struct {
@@ -69,6 +70,7 @@ static struct {
     uint32_t buffered;      /* sectors read ahead and not yet sent to I2S (current generation) */
     esp_timer_handle_t volume_save_timer;
     int volume;
+    bool autoplay;
     uint32_t underruns;
     uint32_t read_errors;
 } P;
@@ -366,6 +368,44 @@ static void volume_change_locked(int delta)
     }
 }
 
+static bool autoplay_load(void)
+{
+    nvs_handle_t nvs;
+    uint8_t v = 1;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+        nvs_get_u8(nvs, NVS_KEY_AUTOPLAY, &v); /* keeps the default if not stored */
+        nvs_close(nvs);
+    }
+    return v != 0;
+}
+
+bool player_get_autoplay(void)
+{
+    LOCK();
+    bool on = P.autoplay;
+    UNLOCK();
+    return on;
+}
+
+void player_set_autoplay(bool on)
+{
+    LOCK();
+    P.autoplay = on;
+    UNLOCK();
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, NVS_KEY_AUTOPLAY, on);
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Saving autoplay failed: %s", esp_err_to_name(err));
+    }
+}
+
 /* ------------------------------------------------------------------------ */
 /* API                                                                      */
 /* ------------------------------------------------------------------------ */
@@ -385,6 +425,7 @@ esp_err_t player_init(void)
     }
     P.state = PLAYER_NO_DISC;
     P.volume = volume_load();
+    P.autoplay = autoplay_load();
     strlcpy(P.message, "Waiting for drive", sizeof(P.message));
 
     const esp_timer_create_args_t save_timer_args = {
@@ -453,8 +494,8 @@ void player_set_message(const char *msg)
 void player_command(player_cmd_t cmd, int arg)
 {
     LOCK();
-    if (cmd == PLAYER_CMD_VOLUME_REL) { /* allowed without a disc */
-        volume_change_locked(arg);
+    if (cmd == PLAYER_CMD_VOLUME_REL || cmd == PLAYER_CMD_VOLUME_SET) { /* allowed without a disc */
+        volume_change_locked(cmd == PLAYER_CMD_VOLUME_SET ? arg - P.volume : arg);
         UNLOCK();
         return;
     }
@@ -519,7 +560,14 @@ void player_command(player_cmd_t cmd, int arg)
         seek_locked((uint32_t)target);
         break;
     }
+    case PLAYER_CMD_SEEK_ABS: {
+        uint32_t len = atapi_toc_track_length(&P.toc, idx);
+        uint32_t off = (uint32_t)MAX(arg, 0) * ATAPI_CD_FRAMES_PER_SECOND;
+        seek_locked(track_start + MIN(off, len ? len - 1 : 0));
+        break;
+    }
     case PLAYER_CMD_VOLUME_REL:
+    case PLAYER_CMD_VOLUME_SET:
         break; /* handled above */
     }
     UNLOCK();
@@ -568,4 +616,24 @@ void player_get_status(player_status_t *st)
         }
     }
     UNLOCK();
+}
+
+int player_get_tracks(player_track_info_t *out, int max)
+{
+    LOCK();
+    int n = P.has_disc ? MIN(P.toc.num_tracks, max) : 0;
+    const atapi_cd_text_t *ct = P.cdtext;
+    const char *artist = ct ? ct->text[ATAPI_CDTEXT_PERFORMER][0] : NULL;
+    for (int i = 0; i < n; i++) {
+        const atapi_toc_entry_t *t = &P.toc.tracks[i];
+        player_track_info_t *o = &out[i];
+        o->number = t->number;
+        o->audio = !atapi_toc_entry_is_data(t);
+        o->length = atapi_toc_track_length(&P.toc, i);
+        copy_text(o->title, ct ? ct->text[ATAPI_CDTEXT_TITLE][t->number] : NULL);
+        const char *perf = ct ? ct->text[ATAPI_CDTEXT_PERFORMER][t->number] : NULL;
+        copy_text(o->performer, (perf && (!artist || strcmp(perf, artist) != 0)) ? perf : NULL);
+    }
+    UNLOCK();
+    return n;
 }

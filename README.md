@@ -16,16 +16,20 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | Raw CD-DA audio reads (READ CD) | Working, ~3.8x realtime (~650 KiB/s) max; drive set to 4x |
 | Eject / load, error recovery (STALL, timeouts, BOT reset) | Working |
 | I2S output to PCM5102 | Working: gapless across tracks, 0 underruns in testing. Needs the module's solder bridges set (see below) |
-| Transport: play/pause, stop, next/prev, seek, track select, volume | Working (serial commands; physical buttons to be added). Autoplay on disc load; volume persisted in NVS |
+| Transport: play/pause, stop, next/prev, seek, track select, volume | Working (web UI and serial commands; physical buttons to be added). Autoplay on disc load (setting); volume and autoplay persisted in NVS |
+| Web UI (controls, track list, settings, firmware upload) at http://cdplayer.local/ | Working |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
 | De-emphasis for pre-emphasis tracks | Not implemented |
 | Non-ASCII CD-TEXT characters on screen | Not rendered (LVGL Montserrat fonts are ASCII only) |
-| Final board: partition table, flash QIO mode | **Pending.** The app uses ~650 KB of the 1 MB partition |
+| Wi-Fi (station, mDNS `cdplayer.local`), firmware update over Wi-Fi (OTA) with rollback | Working: ~12 s per update (~120 KiB/s), slots alternate, new image confirms itself. Playback unaffected by Wi-Fi |
+| Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (mounted, not used yet). The app is ~1.4 MB |
+| Final board: flash QIO mode | Pending |
 
 Verified with an **HP BD ROM BC-5501H** (slim SATA BD drive) behind an **Initio** USB bridge
 (VID 0x13fd, PID 0x0840, interface subclass 0x02 / ATAPI, Bulk-Only), using a pressed audio CD with
-CD-TEXT (Lorde, *Virgin*, 11 tracks).
+CD-TEXT (Lorde, *Virgin*, 11 tracks). Also works with an old IDE drive, **JLMS XJ-HD165H**, behind a
+**JMicron** USB-IDE bridge (VID 0x152d, PID 0x2338, subclass 0x06). This bridge needed exact READ TOC lengths (see the component README).
 
 ## Hardware (current prototype)
 
@@ -53,6 +57,10 @@ The WS2812 status LED code was removed when the display took over status indicat
 
 ## Building and flashing
 
+Normally: **build and update over Wi-Fi** (see [Firmware update over Wi-Fi](#firmware-update-over-wi-fi-ota)).
+A cable flash is only needed the first time, for bootloader or partition table changes, or to recover a device
+that can't reach Wi-Fi.
+
 ESP-IDF **v6.1** is installed with the Espressif Installation Manager (EIM).
 `C:\esp\v6.1\esp-idf\export.ps1` does **not** work on this machine (it looks for a Python env that
 doesn't exist). Activate the environment with the EIM profile script instead:
@@ -75,8 +83,53 @@ serial port is exposed there. To flash:
    board stayed in the bootloader.
 5. Reconnect the drive. Logs are on COM23.
 
+A cable flash writes the bootloader, the partition table, the app into `ota_0`, and the initial otadata (so
+`ota_0` boots, whichever slot ran before). NVS (volume, Wi-Fi credentials) and the LittleFS partition are not
+erased. `idf.py erase-flash` erases both.
+
+### Firmware update over Wi-Fi (OTA)
+
+One-time setup: set the Wi-Fi credentials with the serial command `W`. It prompts for the SSID and password
+(stored in NVS; an empty SSID clears them). Example from the agent shell:
+`python tools/sercmd.py COM23 20 "0.5:W" "1:MyNetwork~" "2:secret~" "15:w"`.
+Alternatively, set defaults in menuconfig (*CD player → Default Wi-Fi SSID/password*). Stored NVS credentials
+take precedence. `w` prints the connection state, IP, firmware version, OTA state, storage and heap.
+
+```powershell
+idf.py build
+python tools/ota.py                    # default host cdplayer.local, image build/usbhost_cd.bin
+python tools/ota.py 192.168.1.42       # by IP if mDNS doesn't resolve
+```
+
+The device accepts the upload at `POST /ota` and checks that it is an ESP32-S3 app image of this project.
+It writes the image to the inactive slot (`ota_0`/`ota_1`), sequentially erasing as data arrives, and then reboots.
+Playback is paused during the upload, and the screen shows `Firmware update NN%`. `tools/ota.py` then polls
+`GET /info` (JSON: version, build time, ELF SHA-256, partition, OTA state, uptime) until the device reports
+the uploaded image's ELF SHA-256. The same works with
+`curl --data-binary @build/usbhost_cd.bin http://cdplayer.local/ota`.
+
+**Rollback:** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. A freshly updated firmware boots as *pending-verify*.
+It confirms itself once it has connected to Wi-Fi and the HTTP server is running again, i.e. once the next OTA
+update is possible. If it crashes or never gets there, the **next reset** boots the previous firmware. Note:
+nothing resets the board automatically when the new firmware hangs; press RST or power-cycle. If no Wi-Fi
+credentials are configured, the firmware confirms itself immediately.
+
+**No authentication:** anyone on the LAN can upload firmware. Acceptable for a home network prototype; add a
+token or password before it leaves the house.
+
 Dependencies (managed components): `espressif/usb` (USB Host library, external since IDF 6.0),
-`espressif/esp_lvgl_port`, `lvgl/lvgl` (v9).
+`espressif/esp_lvgl_port`, `lvgl/lvgl` (v9), `espressif/mdns`, `joltwallet/littlefs`.
+
+### Partition table ([partitions.csv](partitions.csv), 16 MB flash)
+
+| Name | Type | Offset | Size | Use |
+|---|---|---|---|---|
+| nvs | data/nvs | 0x9000 | 24 KB | Settings (volume, Wi-Fi credentials). Same offset/size as the old table, so settings survived the switch |
+| otadata | data/ota | 0xF000 | 8 KB | Which OTA slot boots, rollback state |
+| phy_init | data/phy | 0x11000 | 4 KB | RF calibration data |
+| ota_0 | app | 0x20000 | 2.5 MB | Firmware slot A |
+| ota_1 | app | 0x2A0000 | 2.5 MB | Firmware slot B |
+| storage | data/littlefs | 0x520000 | ~10.9 MB | LittleFS mounted at `/data` (`storage.c`). Formatted automatically on first mount. Meant for cached metadata from the internet (track lists, cover art) |
 
 ### Configuration (`sdkconfig.defaults`)
 
@@ -85,7 +138,12 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
   buffers are allocated by the USB library from internal DMA-capable RAM.
 - Console on UART0, TX GPIO16 / RX GPIO21; no secondary console. The native USB port is the USB Host.
 - LVGL: Montserrat 14/20/28 fonts; clib malloc/string/sprintf, so large LVGL allocations can go to PSRAM.
-- Not yet changed: the partition table (single 1 MB factory app, ~37% free) and flash mode (DIO). These will be set for the final board.
+- `CONFIG_IDF_TARGET="esp32s3"`: so `sdkconfig` can be regenerated from the defaults (delete it and build).
+- Custom partition table (`partitions.csv`), app rollback enabled in the bootloader.
+- Wi-Fi: `CONFIG_ESP_PHY_ENABLE_USB=y` keeps the USB PHY powered when the Wi-Fi PHY initializes. Without it the
+  drive on the native USB port would stop working. Wi-Fi/lwIP buffers may be allocated in PSRAM.
+  `CONFIG_MDNS_ENABLE_CONSOLE_CLI=n` (no console component in the build).
+- Not yet changed: flash mode (DIO). This will be set for the final board.
 
 ## Application
 
@@ -96,17 +154,45 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/player.h](main/player.h) | Player API, status snapshot, volume cap (persisted in NVS by `player.c`) (`PLAYER_VOLUME_MAX`, `PLAYER_VOLUME_STEP`, `player_volume_display()`) |
 | [main/audio_out.c](main/audio_out.c) | I2S0 master, 44.1 kHz, 16-bit stereo, Philips format, MCLK = 256·fs. DMA auto-clear outputs silence on pause or underrun. Pin check and test-tone diagnostics |
 | [main/ui.c](main/ui.c) | LVGL screen, refreshed every 200 ms from a `player_get_status()` snapshot (runs in the LVGL task) |
+| [main/net.c](main/net.c) | Wi-Fi station: credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS hostname `cdplayer` (`CONFIG_CD_HOSTNAME`), starts the HTTP server on the first IP address |
+| [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
+| [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
+| [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
 
 On disc load the drive is set to 4x (`SET CD SPEED`) for less noise. CD audio needs 1x.
-A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up
-(`AUTOPLAY_ON_LOAD` in `cd_player_main.c`; set it to 0 to start stopped instead).
+A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up.
+This is the *Autoplay* setting in the web UI (NVS namespace `player`, key `autoplay`, default on).
 
 ### Controls
 
-For now the player is controlled only through serial commands. The onboard buttons are not used; dedicated
+The player is controlled through the web UI or serial commands. The onboard buttons are not used; dedicated
 buttons will be added later. An earlier, uncommitted version used the two onboard buttons through the
 `espressif/button` component (click / double click / hold events), which worked well for this.
+
+### Web UI (http://cdplayer.local/)
+
+Served by the player itself ([main/web/index.html](main/web/index.html), embedded in the firmware; [main/web.c](main/web.c)).
+Works on phones. It refreshes once per second.
+
+- **Now playing:** artist/album, title, track number, state, position, a progress bar (click to seek),
+  and the transport buttons: previous, -10 s, play/pause, stop, +10 s, next, eject/load.
+- **Volume** slider (as displayed, 0-100 %), buffer fill, underruns and read errors.
+- **Track list** with CD-TEXT titles and lengths; click a track to play it.
+- **Settings:** autoplay, Wi-Fi network (save and reconnect), firmware info, firmware upload (same as
+  `tools/ota.py`; waits for the reboot and reports the running version), reboot, memory and storage use.
+
+No authentication, like OTA. The JSON API can also be used by scripts:
+
+| Request | Function |
+|---|---|
+| `GET /api/status` | Player state, position/length in seconds, volume (%), buffer, counters, CD-TEXT, Wi-Fi, firmware (version, ELF hash prefix, partition, OTA state, uptime), memory, storage |
+| `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
+| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`. Returns the status |
+| `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
+| `POST /api/reboot` | Restart |
+
+Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
 
 ### Serial commands (COM23, 115200)
 
@@ -122,6 +208,8 @@ buttons will be added later. An earlier, uncommitted version used the two onboar
 | `i` | Print status |
 | `a` | Diagnostics: measure MCLK/BCK/LCK frequencies and DIN activity on the I2S pins (pulse counter, outputs undisturbed) |
 | `t` | Diagnostics: 1 kHz test tone for 3 s (pauses the player) |
+| `w` | Network/firmware info: Wi-Fi state, IP, RSSI, firmware version/ELF SHA/partition/OTA state, storage use, free heap |
+| `W` | Set Wi-Fi credentials (prompts for SSID and password; Enter on an empty SSID clears them) |
 | `h` | Help |
 
 Every command prints a status line, for example:
@@ -168,9 +256,11 @@ SCK is driven with MCLK = 256·fs from GPIO17. Alternatively, tie SCK to GND to 
 | Track 8 / 11                                > |
 | 00:26               / 02:35                    |
 | [=========----------------------------------] |
-| Vol 100%  Buf 91%                       34:56 |
+| Vol 100%  Buf 91%  (wifi)               34:56 |
 +------------------------------------------------+
 ```
+
+A Wi-Fi symbol after the buffer value means connected. During a firmware update, the title line shows the progress.
 
 When there is no disc, the title line shows the drive state: Waiting for drive, Drive found..., Loading...,
 No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
@@ -202,6 +292,8 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
 3. Media change events via `atapi_host_get_media_status()` instead of polling TEST UNIT READY every second.
 4. Power management: spin down / stop the drive after a while in stopped state, dim the backlight.
 5. Physical buttons (transport + eject), with debouncing.
-6. Final board: partition table (larger app partition; the app is already 650 KB), QIO flash.
-7. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
+6. Final board: QIO flash.
+7. Online metadata (track lists, cover art) cached in LittleFS at `/data`, e.g. looked up by disc ID from the TOC.
+8. OTA authentication (token/password).
+9. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
    need to be bridged. The drive's own cache already covers several seconds.

@@ -2,10 +2,11 @@
  * USB CD player (LilyGO T-Display S3 + USB optical drive + PCM5102 I2S DAC)
  *
  * - Detects an optical drive on the USB Host port, waits for an audio CD
- * - Reads TOC and CD-TEXT, starts playing (AUTOPLAY_ON_LOAD), streams CD-DA to the I2S DAC (player.c)
+ * - Reads TOC and CD-TEXT, starts playing (autoplay setting), streams CD-DA to the I2S DAC (player.c)
  * - Shows track info / transport state on the display (ui.c)
  * - Controlled via serial commands on the console UART (type 'h' for help);
  *   physical buttons will be added later
+ * - Wi-Fi with firmware update over HTTP (net.c, ota.c, tools/ota.py); LittleFS at /data (storage.c)
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -26,11 +27,14 @@
 #include "player.h"
 #include "audio_out.h"
 #include "ui.h"
+#include "net.h"
+#include "ota.h"
+#include "storage.h"
+#include "app.h"
 
 static const char *TAG = "cd";
 
 #define CD_READ_SPEED_KBPS  (4 * ATAPI_SPEED_1X_KBPS)  /* 4x: plenty of margin, less noise than max */
-#define AUTOPLAY_ON_LOAD    1   /* start playing as soon as a disc is loaded (inserted, or present at boot) */
 
 typedef enum {
     APP_DEVICE_CONNECTED,
@@ -92,7 +96,7 @@ static void usb_lib_task(void *arg)
 /* Input: serial commands                                                   */
 /* ------------------------------------------------------------------------ */
 
-static void post_eject(void)
+void app_eject_toggle(void)
 {
     app_msg_t msg = {.id = APP_EJECT_TOGGLE};
     xQueueSend(s_queue, &msg, 0);
@@ -120,7 +124,60 @@ static void print_help(void)
 {
     printf("Commands: p=play/pause s=stop n=next b=previous f/r=+/-10s +/-=volume e=eject/load\n"
            "          <number><Enter>=play track, i=status, h=help\n"
-           "          a=check I2S pins, t=1 kHz test tone (3 s)\n");
+           "          a=check I2S pins, t=1 kHz test tone (3 s)\n"
+           "          w=network/firmware info, W=set Wi-Fi credentials\n");
+}
+
+/**
+ * Read a line with echo (Enter terminates; a LF right after CR is skipped, so CRLF terminals work).
+ * @param mask echo '*' instead of the characters
+ */
+static void read_line(uart_port_t port, char *buf, size_t size, bool mask)
+{
+    static bool last_cr;
+    size_t len = 0;
+    while (true) {
+        uint8_t ch;
+        if (uart_read_bytes(port, &ch, 1, portMAX_DELAY) != 1) {
+            continue;
+        }
+        if (ch == '\n' && last_cr) {
+            last_cr = false;
+            continue;
+        }
+        last_cr = ch == '\r';
+        if (ch == '\r' || ch == '\n') {
+            break;
+        }
+        if ((ch == '\b' || ch == 0x7f) && len > 0) {
+            len--;
+            printf("\b \b");
+        } else if (ch >= 0x20 && ch < 0x7f && len < size - 1) {
+            buf[len++] = ch;
+            putchar(mask ? '*' : ch);
+        }
+        fflush(stdout);
+    }
+    buf[len] = '\0';
+    printf("\n");
+}
+
+static void configure_wifi(uart_port_t port)
+{
+    char ssid[33], pass[65];
+    printf("Wi-Fi SSID (empty = clear): ");
+    fflush(stdout);
+    read_line(port, ssid, sizeof(ssid), false);
+    pass[0] = '\0';
+    if (ssid[0]) {
+        printf("Password (empty = open network): ");
+        fflush(stdout);
+        read_line(port, pass, sizeof(pass), true);
+    }
+    esp_err_t err = net_set_credentials(ssid, pass);
+    if (err != ESP_OK) {
+        printf("Saving Wi-Fi credentials failed: %s\n", esp_err_to_name(err));
+    }
 }
 
 /** Simple command interface on the console UART, so the player can be driven without buttons */
@@ -157,7 +214,7 @@ static void console_task(void *arg)
         case 'r': player_command(PLAYER_CMD_SEEK_REL, -10); break;
         case '+': player_command(PLAYER_CMD_VOLUME_REL, PLAYER_VOLUME_STEP); break;
         case '-': player_command(PLAYER_CMD_VOLUME_REL, -PLAYER_VOLUME_STEP); break;
-        case 'e': post_eject(); break;
+        case 'e': app_eject_toggle(); break;
         case 'a': audio_out_check_pins(); break;
         case 't': {
             player_status_t st;
@@ -171,6 +228,8 @@ static void console_task(void *arg)
             break;
         }
         case 'i': break;
+        case 'w': net_print_info(); number = -1; continue;
+        case 'W': configure_wifi(port); number = -1; continue;
         case 'h': print_help(); break;
         default:
             number = -1; /* unknown character: discard a partially typed track number */
@@ -263,10 +322,10 @@ static bool load_disc(atapi_host_device_handle_t dev)
         ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));
     }
     player_load_disc(&toc, cdtext); /* player owns cdtext now */
-#if AUTOPLAY_ON_LOAD
-    player_command(PLAYER_CMD_PLAY, 0);
-    ESP_LOGI(TAG, "Autoplay");
-#endif
+    if (player_get_autoplay()) { /* start as soon as a disc is loaded (inserted, or present at boot) */
+        player_command(PLAYER_CMD_PLAY, 0);
+        ESP_LOGI(TAG, "Autoplay");
+    }
     return true;
 }
 
@@ -285,9 +344,16 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    ota_log_boot_info();
+    storage_init(); /* not fatal: the player works without the cache */
 
     ESP_ERROR_CHECK(player_init());
     ESP_ERROR_CHECK(ui_init());
+    /* After the UI, so the LVGL DMA buffers get internal RAM first. Not fatal: the player works offline */
+    err = net_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi init failed: %s", esp_err_to_name(err));
+    }
     xTaskCreate(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
 
@@ -370,14 +436,17 @@ void app_main(void)
             if (state == ESP_ERR_ATAPI_NO_MEDIUM) {
                 atapi_sense_t s;
                 atapi_host_get_last_sense(dev, &s);
-                ESP_LOGI(TAG, "No disc (%s)", atapi_sense_to_str(&s));
-                if (s.ascq == 0x02) {
-                    tray_open = true;
-                    player_set_message("Tray open");
-                } else {
-                    tray_open = false;
-                    player_set_message("No disc");
+                /* ASCQ 01 = tray closed, 02 = tray open. Some drives (JLMS XJ-HD165H) only report the
+                 * generic 3A/00: then ask GET EVENT STATUS NOTIFICATION, else keep the tracked state
+                 * (otherwise eject would never close the tray again). */
+                atapi_media_status_t ms;
+                if (s.ascq == 0x01 || s.ascq == 0x02) {
+                    tray_open = s.ascq == 0x02;
+                } else if (atapi_host_get_media_status(dev, &ms) == ESP_OK) {
+                    tray_open = ms.tray_open;
                 }
+                ESP_LOGI(TAG, "No disc (%s), tray %s", atapi_sense_to_str(&s), tray_open ? "open" : "closed");
+                player_set_message(tray_open ? "Tray open" : "No disc");
             } else if (state == ESP_ERR_ATAPI_NOT_READY) {
                 ESP_LOGI(TAG, "Disc becoming ready...");
                 player_set_message("Loading...");

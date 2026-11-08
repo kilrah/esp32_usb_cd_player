@@ -1,0 +1,20 @@
+menu "CD player"
+
+    config CD_HOSTNAME
+        string "Network hostname"
+        default "cdplayer"
+        help
+            DHCP and mDNS hostname. The OTA server is reachable as http://<hostname>.local/.
+
+    config CD_WIFI_SSID
+        string "Default Wi-Fi SSID"
+        default ""
+        help
+            Used only when no credentials are stored in NVS. Credentials set with the
+            serial command 'W' are stored in NVS and take precedence. Empty = Wi-Fi off until set.
+
+    config CD_WIFI_PASSWORD
+        string "Default Wi-Fi password"
+        default ""
+
+endmenu

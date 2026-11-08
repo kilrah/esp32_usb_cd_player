@@ -1,6 +1,7 @@
 # This file was generated using idf.py save-defconfig. It can be edited manually.
 # Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 #
+CONFIG_IDF_TARGET="esp32s3"
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
 
 # ESP32-S3 N16R8: 16 MB quad flash, 8 MB octal PSRAM
@@ -24,3 +25,23 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
+
+# Partitions: 2x 2.5 MB OTA app slots + LittleFS "storage" (partitions.csv)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# An OTA image boots as "pending verify" and is rolled back on the next reset unless the app
+# confirms it (done once Wi-Fi is up and the OTA server is reachable, see main/net.c)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Wi-Fi. Keep the USB PHY enabled when the Wi-Fi PHY initializes: the drive is on the native USB port
+CONFIG_ESP_PHY_ENABLE_USB=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_MDNS_ENABLE_CONSOLE_CLI=n
+# Larger TCP receive window: faster OTA uploads (buffers can go to PSRAM)
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+
+# I2S ISR runs while the flash cache is disabled (OTA, LittleFS writes), so auto-clear keeps
+# writing silence on underrun instead of the DMA ring looping its last audio
+CONFIG_I2S_ISR_IRAM_SAFE=y

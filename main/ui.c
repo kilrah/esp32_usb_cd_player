@@ -7,7 +7,7 @@
  *  | Track 3 / 11                                > |
  *  | 01:23                  / 04:17                 |
  *  | [=============-------------------------------] |
- *  | Vol 100%  Buf 92%                       34:56 |
+ *  | Vol 100%   Buf  92%   (wifi) (warn)     34:56 |
  *  +------------------------------------------------+
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
@@ -20,6 +20,8 @@
 #include "esp_lvgl_port.h"
 #include "tdisplay_s3.h"
 #include "player.h"
+#include "net.h"
+#include "ota.h"
 #include "ui.h"
 
 static const char *TAG = "ui";
@@ -29,7 +31,8 @@ static const char *TAG = "ui";
 #define COLOR_DIM    lv_color_hex(0x8a8a8a)
 #define COLOR_ACCENT lv_color_hex(0x37b4ff)
 
-static lv_obj_t *s_album, *s_title, *s_track, *s_state, *s_time, *s_total, *s_bar, *s_info, *s_disc_len;
+static lv_obj_t *s_album, *s_title, *s_track, *s_state, *s_time, *s_total, *s_bar, *s_disc_len;
+static lv_obj_t *s_vol, *s_buf, *s_wifi, *s_warn; /* bottom line: fixed slots, values right-aligned */
 
 static void set_text(lv_obj_t *lbl, const char *text)
 {
@@ -105,9 +108,20 @@ static void update_cb(lv_timer_t *t)
                          LV_ANIM_OFF);
     }
 
-    snprintf(buf, sizeof(buf), "Vol %d%%   Buf %d%%%s", player_volume_display(st.volume), st.buffer_pct,
-             st.read_errors ? "   " LV_SYMBOL_WARNING : "");
-    set_text(s_info, buf);
+    int ota = ota_progress();
+    if (ota >= 0) {
+        snprintf(buf, sizeof(buf), "Firmware update %d%%", ota);
+        set_text(s_title, buf);
+    }
+
+    net_status_t net;
+    net_get_status(&net);
+    snprintf(buf, sizeof(buf), "%d%%", player_volume_display(st.volume));
+    set_text(s_vol, buf);
+    snprintf(buf, sizeof(buf), "%d%%", st.buffer_pct);
+    set_text(s_buf, buf);
+    set_text(s_wifi, net.connected ? LV_SYMBOL_WIFI : "");
+    set_text(s_warn, st.read_errors ? LV_SYMBOL_WARNING : "");
 }
 
 static void build_screen(void)
@@ -137,7 +151,18 @@ static void build_screen(void)
     lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x303030), LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_bar, COLOR_ACCENT, LV_PART_INDICATOR);
 
-    s_info = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X, 144, 0);
+    /* Bottom line: "Vol 100%   Buf  92%   (wifi) (warning)". Values sit in fixed-width, right-aligned
+     * boxes so nothing moves when their digit count changes. */
+    make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X, 144, 0);
+    lv_label_set_text(lv_obj_get_child(scr, -1), "Vol");
+    s_vol = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X + 24, 144, 42);
+    lv_obj_set_style_text_align(s_vol, LV_TEXT_ALIGN_RIGHT, 0);
+    make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X + 82, 144, 0);
+    lv_label_set_text(lv_obj_get_child(scr, -1), "Buf");
+    s_buf = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X + 106, 144, 42);
+    lv_obj_set_style_text_align(s_buf, LV_TEXT_ALIGN_RIGHT, 0);
+    s_wifi = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X + 164, 144, 0);
+    s_warn = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, COL_X + 188, 144, 0);
     s_disc_len = make_label(scr, &lv_font_montserrat_14, COLOR_DIM, 0, 144, 0);
     lv_obj_align(s_disc_len, LV_ALIGN_TOP_RIGHT, -COL_X, 144);
 

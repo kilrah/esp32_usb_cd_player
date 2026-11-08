@@ -13,6 +13,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.9.0
+  espressif/mdns:
+    component_hash: 2fa43caa78cc170842255bc7bf71f306bc815cae12e9496bfb12372423019ac7
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.15.1
   espressif/usb:
     component_hash: 99eee72ea224d9117d4c342442717a1f20bf8112e2ab5d7d7038b827874f4c92
     dependencies:
@@ -34,6 +44,16 @@ dependencies:
     source:
       type: idf
     version: 6.1.0
+  joltwallet/littlefs:
+    component_hash: e1a0f4a6adf821759cb34703a91107bbdce5d7ff6f4728f40ab012bb87842974
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.23.1
   lvgl/lvgl:
     component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
     dependencies: []
@@ -67,11 +87,13 @@ dependencies:
     version: '*'
 direct_dependencies:
 - espressif/esp_lvgl_port
+- espressif/mdns
 - espressif/usb
 - idf
+- joltwallet/littlefs
 - lvgl/lvgl
 - tdisplay_s3
 - usb_host_atapi
-manifest_hash: 3a2a5a8d3e28b578db6ed90f9cfbabb2b5dc3d9fb87396eeac68362777fea609
+manifest_hash: f2a1f25f36915f3d767704e1a47fcff2b17538cc99db2d5779ce0ec1f03af452
 target: esp32s3
 version: 3.0.0

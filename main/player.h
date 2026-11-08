@@ -27,6 +27,8 @@ typedef enum {
     PLAYER_CMD_TRACK,       /*!< arg = track number */
     PLAYER_CMD_SEEK_REL,    /*!< arg = seconds (+/-) */
     PLAYER_CMD_VOLUME_REL,  /*!< arg = percent (+/-), clamped to 0..PLAYER_VOLUME_MAX */
+    PLAYER_CMD_VOLUME_SET,  /*!< arg = internal volume 0..PLAYER_VOLUME_MAX */
+    PLAYER_CMD_SEEK_ABS,    /*!< arg = seconds from the start of the current track */
 } player_cmd_t;
 
 /* Digital volume (attenuation only). Capped because the PCM5102 output (~2.1 Vrms at full scale)
@@ -80,3 +82,19 @@ void player_set_message(const char *msg);
 
 void player_command(player_cmd_t cmd, int arg);
 void player_get_status(player_status_t *st);
+
+/** Track list entry (strings UTF-8, never NULL) */
+typedef struct {
+    int number;
+    bool audio;
+    uint32_t length;                 /*!< sectors */
+    char title[PLAYER_TEXT_LEN];     /*!< CD-TEXT title, empty if none */
+    char performer[PLAYER_TEXT_LEN]; /*!< CD-TEXT performer if different from the album artist, else empty */
+} player_track_info_t;
+
+/** Copy up to @p max tracks of the loaded disc. Returns the number of tracks (0 without a disc). */
+int player_get_tracks(player_track_info_t *out, int max);
+
+/** Start playing as soon as a disc is loaded (persisted in NVS, default on) */
+bool player_get_autoplay(void);
+void player_set_autoplay(bool on);
