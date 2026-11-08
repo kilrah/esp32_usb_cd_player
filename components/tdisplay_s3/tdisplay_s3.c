@@ -2,7 +2,7 @@
  * LilyGO T-Display S3: ST7789 (i80, 8-bit) + LVGL 9 initialization
  *
  * Based on https://github.com/hiruna/esp-idf-t-display-s3 (adapted to ESP-IDF 6: LVGL draw buffers in internal RAM,
- * dma_burst_size instead of the alignment fields; backlight via plain GPIO; no battery ADC).
+ * dma_burst_size instead of the alignment fields; AW9364 backlight levels; no battery ADC).
  * SPDX-FileCopyrightText: © 2025 Hiruna Wijesinghe <hiruna.kawinda@gmail.com>
  * SPDX-License-Identifier: MIT
  */
@@ -11,6 +11,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_st7789.h"
@@ -22,9 +24,51 @@ static const char *TAG = "tdisplay_s3";
 #define LCD_PIXEL_CLOCK_HZ   (17 * 1000 * 1000) /* PSRAM bandwidth limits this */
 #define LVGL_BUFFER_PIXELS   ((TDS3_LCD_H_RES * TDS3_LCD_V_RES) / 10 + TDS3_LCD_H_RES)
 
+/*
+ * Backlight: AW9364 LED driver, 16 levels set by pulses on its EN pin (GPIO38), as in LilyGO's setBrightness().
+ * Rising edge from off = level 16 (max); each short low pulse (0.5..500 us low) steps one level down,
+ * wrapping from 1 to 16. Low for > 2.5 ms switches it off.
+ */
+static portMUX_TYPE s_bl_lock = portMUX_INITIALIZER_UNLOCKED;
+static int s_bl_level;
+
+void tdisplay_s3_set_brightness(int level)
+{
+    level = level < 0 ? 0 : level > TDS3_BRIGHTNESS_MAX ? TDS3_BRIGHTNESS_MAX : level;
+    if (level == s_bl_level) {
+        return;
+    }
+    if (level == 0) {
+        gpio_set_level(TDS3_PIN_LCD_BL, 0);
+        esp_rom_delay_us(3000);
+        s_bl_level = 0;
+        return;
+    }
+    if (s_bl_level == 0) {
+        gpio_set_level(TDS3_PIN_LCD_BL, 1);
+        esp_rom_delay_us(30);
+        s_bl_level = TDS3_BRIGHTNESS_MAX;
+    }
+    int pulses = (s_bl_level - level + TDS3_BRIGHTNESS_MAX) % TDS3_BRIGHTNESS_MAX;
+    portENTER_CRITICAL(&s_bl_lock); /* a low phase stretched beyond 2.5 ms would switch the driver off */
+    for (int i = 0; i < pulses; i++) {
+        gpio_set_level(TDS3_PIN_LCD_BL, 0);
+        esp_rom_delay_us(1);
+        gpio_set_level(TDS3_PIN_LCD_BL, 1);
+        esp_rom_delay_us(1);
+    }
+    portEXIT_CRITICAL(&s_bl_lock);
+    s_bl_level = level;
+}
+
+int tdisplay_s3_get_brightness(void)
+{
+    return s_bl_level;
+}
+
 void tdisplay_s3_backlight(bool on)
 {
-    gpio_set_level(TDS3_PIN_LCD_BL, on);
+    tdisplay_s3_set_brightness(on ? TDS3_BRIGHTNESS_MAX : 0);
 }
 
 esp_err_t tdisplay_s3_init(lv_display_t **disp)

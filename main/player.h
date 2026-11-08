@@ -63,6 +63,8 @@ typedef struct {
     char title[PLAYER_TEXT_LEN];     /*!< Current track title (or "Track N") */
     char performer[PLAYER_TEXT_LEN]; /*!< Current track performer, empty if same as album artist */
     char message[PLAYER_TEXT_LEN];   /*!< Drive/disc status message when there is no disc */
+    bool preemphasis;        /*!< Current track is flagged with pre-emphasis */
+    bool deemphasis;         /*!< De-emphasis filter active (pre-emphasis track, or forced) */
 } player_status_t;
 
 esp_err_t player_init(void);
@@ -81,6 +83,13 @@ void player_unload_disc(void);
 void player_set_message(const char *msg);
 
 void player_command(player_cmd_t cmd, int arg);
+
+/** The drive motor was stopped for power saving (TEST UNIT READY may say "not ready" meanwhile) */
+bool player_is_spun_down(void);
+
+/** Apply the de-emphasis filter to all tracks, flagged or not (to audition / test it; not persisted) */
+void player_force_deemphasis(bool on);
+bool player_deemphasis_forced(void);
 void player_get_status(player_status_t *st);
 
 /** Album metadata from another source than CD-TEXT (online lookup / cache), indexed by track number */

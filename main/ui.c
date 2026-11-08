@@ -21,8 +21,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_check.h"
+#include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "nvs.h"
 #include "esp_lvgl_port.h"
 #include "tdisplay_s3.h"
 #include "player.h"
@@ -40,6 +42,23 @@ static const char *TAG = "ui";
 #define TEXT_W_COVER (COVER_X - 8 - COL_X)   /* album/title width when the cover is shown */
 #define COLOR_DIM    lv_color_hex(0x8a8a8a)
 #define COLOR_ACCENT lv_color_hex(0x37b4ff)
+
+/* Backlight settings: NVS namespace "display", key "backlight" (blob, versioned) */
+#define BL_NVS_NAMESPACE "display"
+#define BL_NVS_KEY       "backlight"
+#define BL_CFG_VERSION   1
+
+typedef struct {
+    uint8_t version;
+    uint8_t mode, on_level, dim_level;
+    uint16_t dim_delay_s, off_delay_s;
+} bl_nvs_t;
+
+static portMUX_TYPE s_bl_lock = portMUX_INITIALIZER_UNLOCKED;
+static ui_backlight_cfg_t s_bl = {
+    .mode = UI_DIM_IDLE, .on_level = TDS3_BRIGHTNESS_MAX, .dim_level = 4, .dim_delay_s = 30, .off_delay_s = 600,
+};
+static volatile bool s_bl_wake; /* settings changed: treat as activity */
 
 static lv_obj_t *s_album, *s_title, *s_track, *s_state, *s_time, *s_total, *s_bar, *s_disc_len;
 static lv_obj_t *s_vol, *s_buf, *s_wifi, *s_warn; /* bottom line: fixed slots, values right-aligned */
@@ -199,11 +218,113 @@ static void update_cover(void)
     }
 }
 
+/**
+ * Activity = anything the user would notice or cause: play state, track, volume, disc, status message,
+ * firmware update, setup AP. Playback position changes don't count.
+ */
+static void clamp_backlight(ui_backlight_cfg_t *c)
+{
+    c->mode = c->mode > UI_DIM_ALWAYS ? UI_DIM_IDLE : c->mode;
+    c->on_level = c->on_level < 1 ? 1 : c->on_level > TDS3_BRIGHTNESS_MAX ? TDS3_BRIGHTNESS_MAX : c->on_level;
+    c->dim_level = c->dim_level < 0 ? 0 : c->dim_level > c->on_level ? c->on_level : c->dim_level;
+    c->dim_delay_s = c->dim_delay_s < 5 ? 5 : c->dim_delay_s > 3600 ? 3600 : c->dim_delay_s;
+    c->off_delay_s = c->off_delay_s < 0 ? 0 : c->off_delay_s > 24 * 3600 ? 24 * 3600 : c->off_delay_s;
+}
+
+static void load_backlight(void)
+{
+    nvs_handle_t h;
+    bl_nvs_t v;
+    size_t len = sizeof(v);
+    if (nvs_open(BL_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_get_blob(h, BL_NVS_KEY, &v, &len) == ESP_OK && len == sizeof(v) && v.version == BL_CFG_VERSION) {
+        ui_backlight_cfg_t c = {.mode = v.mode, .on_level = v.on_level, .dim_level = v.dim_level,
+                                .dim_delay_s = v.dim_delay_s, .off_delay_s = v.off_delay_s};
+        clamp_backlight(&c);
+        s_bl = c;
+    }
+    nvs_close(h);
+}
+
+const char *ui_dim_mode_name(ui_dim_mode_t mode)
+{
+    static const char *names[] = {"never", "idle", "always"};
+    return mode <= UI_DIM_ALWAYS ? names[mode] : "?";
+}
+
+void ui_get_backlight(ui_backlight_cfg_t *cfg)
+{
+    portENTER_CRITICAL(&s_bl_lock);
+    *cfg = s_bl;
+    portEXIT_CRITICAL(&s_bl_lock);
+}
+
+esp_err_t ui_set_backlight(const ui_backlight_cfg_t *cfg)
+{
+    ui_backlight_cfg_t c = *cfg;
+    clamp_backlight(&c);
+    portENTER_CRITICAL(&s_bl_lock);
+    s_bl = c;
+    portEXIT_CRITICAL(&s_bl_lock);
+    s_bl_wake = true;
+    bl_nvs_t v = {.version = BL_CFG_VERSION, .mode = c.mode, .on_level = c.on_level, .dim_level = c.dim_level,
+                  .dim_delay_s = c.dim_delay_s, .off_delay_s = c.off_delay_s};
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(BL_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(h, BL_NVS_KEY, &v, sizeof(v));
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "Backlight: dim %s, on %d, dim %d after %d s, off after %d s idle%s", ui_dim_mode_name(c.mode),
+             c.on_level, c.dim_level, c.dim_delay_s, c.off_delay_s, err == ESP_OK ? "" : " (NOT saved)");
+    return err;
+}
+
+static void update_backlight(const player_status_t *st)
+{
+    static uint32_t last_sig;
+    static int64_t last_activity;
+    net_status_t net;
+    net_get_status(&net);
+    uint32_t sig = st->state | st->track << 4 | st->volume << 12 | (uint32_t)(ota_progress() >= 0) << 20 |
+                   (uint32_t)net.ap_active << 21;
+    for (const char *c = st->message; *c; c++) {
+        sig = sig * 31 + (unsigned char)*c;
+    }
+    sig ^= st->disc_len * 2654435761u;
+    int64_t now = esp_timer_get_time() / 1000000;
+    if (sig != last_sig || last_activity == 0 || s_bl_wake) {
+        s_bl_wake = false;
+        last_sig = sig;
+        last_activity = now;
+    }
+    ui_backlight_cfg_t c;
+    ui_get_backlight(&c);
+    bool playing = st->state == PLAYER_PLAYING;
+    int64_t quiet = now - last_activity; /* seconds without activity */
+    bool dim = c.mode == UI_DIM_ALWAYS || (c.mode == UI_DIM_IDLE && !playing);
+    int level = c.on_level;
+    if (!playing && c.off_delay_s && quiet >= c.off_delay_s) {
+        level = 0;
+    } else if (dim && quiet >= c.dim_delay_s) {
+        level = c.dim_level;
+    }
+    if (level != tdisplay_s3_get_brightness()) {
+        tdisplay_s3_set_brightness(level);
+    }
+}
+
 static void update_cb(lv_timer_t *t)
 {
     player_status_t st;
     char buf[2 * PLAYER_TEXT_LEN + 8];
     player_get_status(&st);
+    update_backlight(&st);
     update_cover();
 
     if (st.state == PLAYER_NO_DISC) {
@@ -230,7 +351,7 @@ static void update_cb(lv_timer_t *t)
             set_text_ascii(s_title, st.title);
         }
 
-        snprintf(buf, sizeof(buf), "Track %d / %d", st.track, st.num_tracks);
+        snprintf(buf, sizeof(buf), "Track %d / %d%s", st.track, st.num_tracks, st.deemphasis ? "   De-emph." : "");
         set_text(s_track, buf);
         set_text(s_state, st.state == PLAYER_PLAYING ? LV_SYMBOL_PLAY :
                  st.state == PLAYER_PAUSED ? LV_SYMBOL_PAUSE : LV_SYMBOL_STOP);
@@ -347,6 +468,7 @@ static void build_screen(void)
 
 esp_err_t ui_init(void)
 {
+    load_backlight();
     ESP_RETURN_ON_ERROR(tdisplay_s3_init(NULL), TAG, "display");
     if (lvgl_port_lock(0)) {
         build_screen();

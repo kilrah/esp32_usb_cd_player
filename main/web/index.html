@@ -85,6 +85,11 @@ input[type=file] { font-size: 14px; color: var(--dim); max-width: 100%; }
 .toggle small { display: block; color: var(--dim); }
 .toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
 progress { width: 100%; accent-color: var(--accent); }
+.grid2 { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: center; }
+.grid2 label { color: var(--dim); font-size: 14px; }
+.grid2 select, .grid2 input[type=number] { font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.grid2 input[type=number] { width: 6em; }
 .setup { background: color-mix(in srgb, var(--accent) 15%, var(--card)); border: 1px solid var(--accent);
          border-radius: 14px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
 .setup a { color: var(--accent); }
@@ -157,6 +162,28 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
       </section>
 
       <section>
+        <h2>Display</h2>
+        <form id="display-form" class="grid2">
+          <label for="bl-mode">Dimming</label>
+          <select id="bl-mode" name="mode">
+            <option value="idle">Only when idle (nothing playing)</option>
+            <option value="always">Always, also during playback</option>
+            <option value="never">Never</option>
+          </select>
+          <label for="bl-on">Brightness</label>
+          <span class="row"><input type="range" id="bl-on" name="on" min="1" max="16"><span class="num" id="bl-on-v"></span></span>
+          <label for="bl-dim">Dimmed</label>
+          <span class="row"><input type="range" id="bl-dim" name="dim" min="0" max="16"><span class="num" id="bl-dim-v"></span></span>
+          <label for="bl-dim-delay">Dim after</label>
+          <span class="row"><input type="number" id="bl-dim-delay" name="dim_delay" min="5" max="3600"> s</span>
+          <label for="bl-off-delay">Off after</label>
+          <span class="row"><input type="number" id="bl-off-delay" min="0" max="1440"> min idle (0 = never)</span>
+          <span></span>
+          <div class="actions"><button type="submit">Save</button><span class="msg" id="display-msg"></span></div>
+        </form>
+      </section>
+
+      <section>
         <h2>Wi-Fi</h2>
         <dl>
           <dt>Network</dt><dd id="w-ssid">–</dd>
@@ -194,6 +221,16 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
       </section>
 
       <section>
+        <h2>Admin password</h2>
+        <p class="msg" id="auth-state"></p>
+        <form id="admin-form" autocomplete="off">
+          <input type="password" name="pass" id="admin-pass" placeholder="New password (empty = remove)" maxlength="64" autocomplete="new-password">
+          <input type="password" id="admin-pass2" placeholder="Repeat new password" maxlength="64" autocomplete="new-password">
+          <div class="actions"><button type="submit">Set password</button><span class="msg" id="admin-msg"></span></div>
+        </form>
+      </section>
+
+      <section>
         <h2>Album info</h2>
         <dl>
           <dt>Source</dt><dd id="m-src">–</dd>
@@ -223,7 +260,7 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
 "use strict";
 const $ = id => document.getElementById(id);
 const ICON_PLAY = "M8 5v14l11-7z", ICON_PAUSE = "M6 19h4V5H6v14zm8-14v14h4V5h-4z";
-let st = null, discKey = "", busy = false, volDragging = false, volTimer = null, setupOpened = false;
+let st = null, discKey = "", busy = false, volDragging = false, volTimer = null, setupOpened = false, displayFilled = false;
 
 const mmss = s => (s == null || isNaN(s)) ? "--:--" :
   String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
@@ -293,6 +330,19 @@ function render(s) {
   $("f-built").textContent = f.built;
   $("f-part").textContent = `${f.partition} (${f.state})`;
   $("f-up").textContent = uptime(f.uptime);
+  /* Display settings: fill the form once, then leave it to the user */
+  if (!displayFilled) {
+    displayFilled = true;
+    const d = s.display;
+    $("bl-mode").value = d.mode;
+    $("bl-on").value = d.on; $("bl-on-v").textContent = d.on;
+    $("bl-dim").value = d.dim; $("bl-dim-v").textContent = d.dim;
+    $("bl-dim-delay").value = d.dim_delay;
+    $("bl-off-delay").value = Math.round(d.off_delay / 60);
+  }
+  $("auth-state").textContent = f.auth
+    ? "Set: firmware upload and settings changes ask for it (any user name). Serial command P clears it."
+    : "Not set: anyone on the network can upload firmware or change settings.";
   $("s-heap").textContent = `${kib(s.sys.heap_internal)} free (min ${kib(s.sys.heap_internal_min)})`;
   $("s-psram").textContent = kib(s.sys.heap_psram) + " free";
   $("s-fs").textContent = s.sys.fs_total ? `${kib(s.sys.fs_used)} used of ${kib(s.sys.fs_total)}` : "not mounted";
@@ -388,6 +438,31 @@ vol.addEventListener("input", () => {
 });
 
 $("meta-btn").addEventListener("click", () => cmd("meta"));
+
+for (const id of ["bl-on", "bl-dim"]) $(id).addEventListener("input", e => { $(id + "-v").textContent = e.target.value; });
+$("display-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const body = new URLSearchParams(new FormData(e.target));
+  body.set("off_delay", String(Math.round(Number($("bl-off-delay").value) * 60)));
+  try {
+    const r = await fetch("/api/display", {method: "POST", body: body.toString(),
+                                           headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    $("display-msg").textContent = r.ok ? "Saved" : (await r.text()).trim();
+    if (r.ok) { displayFilled = false; render(await r.json()); }
+  } catch (err) { $("display-msg").textContent = "Request failed"; }
+});
+
+$("admin-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const pw = $("admin-pass").value, msg = $("admin-msg");
+  if (pw !== $("admin-pass2").value) { msg.textContent = "The passwords differ"; return; }
+  try {
+    const r = await fetch("/api/admin", {method: "POST", body: new URLSearchParams({pass: pw}).toString(),
+                                         headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    msg.textContent = (await r.text()).trim();
+    if (r.ok) e.target.reset();
+  } catch (err) { msg.textContent = "Request failed"; }
+});
 
 $("autoplay").addEventListener("change", e => cmd("autoplay", e.target.checked ? 1 : 0));
 

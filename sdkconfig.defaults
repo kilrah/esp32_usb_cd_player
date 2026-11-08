@@ -6,6 +6,9 @@ CONFIG_USB_HOST_HUBS_SUPPORTED=y
 
 # ESP32-S3 N16R8: 16 MB quad flash, 8 MB octal PSRAM
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# QIO flash (T-Display S3: QIO flash + octal PSRAM, as in LilyGO's own "qio_opi" config). Changing the
+# flash mode needs a cable flash: OTA refuses images with another mode (ESP_ERR_OTA_SPI_MODE_MISMATCH).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y

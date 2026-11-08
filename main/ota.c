@@ -28,6 +28,7 @@
 #include "player.h"
 #include "ota.h"
 #include "web.h"
+#include "auth.h"
 
 static const char *TAG = "ota";
 
@@ -180,6 +181,9 @@ static void pause_playback(void)
 
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
     if (s_progress >= 0) {
         return send_status(req, "409 Conflict", "Update already in progress\n");
     }

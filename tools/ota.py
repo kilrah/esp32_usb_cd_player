@@ -9,8 +9,12 @@ Example: idf.py build && python tools/ota.py
 The device checks that the image belongs to this project, writes it to the inactive OTA slot and
 reboots. This script then polls GET /info until the device reports the uploaded image's ELF SHA-256.
 If the new firmware doesn't come back on Wi-Fi, the bootloader rolls back to the old one at the next reset.
+
+If an admin password is set on the device, put it in the environment variable CDPLAYER_PASSWORD
+(kept out of the command line and shell history).
 """
 import http.client
+import base64
 import json
 import os
 import socket
@@ -72,6 +76,9 @@ conn = http.client.HTTPConnection(addr, 80, timeout=60)
 conn.putrequest("POST", "/ota")
 conn.putheader("Content-Type", "application/octet-stream")
 conn.putheader("Content-Length", str(len(data)))
+password = os.environ.get("CDPLAYER_PASSWORD")
+if password:
+    conn.putheader("Authorization", "Basic " + base64.b64encode(f"admin:{password}".encode()).decode())
 conn.endheaders()
 t0 = time.time()
 CHUNK = 16 * 1024
@@ -89,6 +96,8 @@ resp = conn.getresponse()
 body = resp.read().decode(errors="replace").strip()
 dt = time.time() - t0
 print(f"{chr(13) if tty else ''}{resp.status} {body} ({dt:.1f} s, {len(data) / 1024 / dt:.0f} KiB/s)")
+if resp.status == 401:
+    sys.exit("The device has an admin password: set CDPLAYER_PASSWORD" if not password else "Wrong admin password")
 if resp.status != 200:
     sys.exit(1)
 

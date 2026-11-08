@@ -10,7 +10,7 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 
 | Area | State |
 |---|---|
-| Drive detection, INQUIRY, disc presence polling | Working |
+| Drive detection, INQUIRY, disc presence polling | Working: media events (GESN) when the drive reports them, else TEST UNIT READY. Tray locked while a disc is loaded (GESN drives), the eject button stops playback cleanly |
 | TOC (track list, track types, pre-emphasis flag) | Working |
 | CD-TEXT (album/track titles, artists, UPC, ISRC) | Working |
 | Raw CD-DA audio reads (READ CD) | Working, ~3.8x realtime (~650 KiB/s) max; drive set to 4x |
@@ -22,11 +22,13 @@ the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
 | Album info + cover art from MusicBrainz / Cover Art Archive (CD-TEXT discs: cover, text gaps), cached in LittleFS | Working (exact disc ID match, cover on screen and in the web UI, offline from cache) |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
-| De-emphasis for pre-emphasis tracks | Not implemented |
+| De-emphasis for pre-emphasis tracks | Working: 1st-order IIR, max. 0.07 dB from the analog curve. Tested with serial `E` (forced), no pre-emphasis disc at hand |
 | Non-ASCII CD-TEXT characters on screen | Not rendered (LVGL Montserrat fonts are ASCII only) |
 | Wi-Fi (station, mDNS `cdplayer.local`), firmware update over Wi-Fi (OTA) with rollback | Working: ~12 s per update (~120 KiB/s), slots alternate, new image confirms itself. Playback unaffected by Wi-Fi |
 | Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (album info cache in `/data/meta`). The app is ~1.6 MB |
-| Final board: flash QIO mode | Pending |
+| Power saving: drive spin-down after 2 min without playback; backlight dimming / off (web UI *Settings > Display*) | Working |
+| Admin password for firmware upload and settings (HTTP Basic auth) | Working (optional, off by default) |
+| Flash QIO mode | Prepared; needs one cable flash (OTA refuses a flash mode change) |
 
 Verified with an **HP BD ROM BC-5501H** (slim SATA BD drive) behind an **Initio** USB bridge
 (VID 0x13fd, PID 0x0840, interface subclass 0x02 / ATAPI, Bulk-Only), using a pressed audio CD with
@@ -140,8 +142,12 @@ update is possible. If it crashes or never gets there, the **next reset** boots 
 nothing resets the board automatically when the new firmware hangs; press RST or power-cycle. If no Wi-Fi
 credentials are configured, the firmware confirms itself immediately.
 
-**No authentication:** anyone on the LAN can upload firmware. Acceptable for a home network prototype; add a
-token or password before it leaves the house.
+**Admin password** ([main/auth.c](main/auth.c)): optional, set in the web UI (*Settings → Admin password*, stored in
+NVS) or as a default in menuconfig (`CONFIG_CD_ADMIN_PASSWORD`). When set, firmware upload, Wi-Fi settings, reboot,
+the setup AP switch, deleting a cache entry and changing the password need it (HTTP Basic auth, any user name;
+the browser asks). Player controls stay open. `tools/ota.py` takes it from the environment variable
+`CDPLAYER_PASSWORD`. The serial command `P` clears it (recovery with physical access). Note that a refused upload
+is only answered after the whole image was sent (no `Expect: 100-continue` in the ESP HTTP server).
 
 Dependencies (managed components): `espressif/usb` (USB Host library, external since IDF 6.0),
 `espressif/esp_lvgl_port`, `lvgl/lvgl` (v9), `espressif/mdns`, `joltwallet/littlefs`.
@@ -169,13 +175,14 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 - Wi-Fi: `CONFIG_ESP_PHY_ENABLE_USB=y` keeps the USB PHY powered when the Wi-Fi PHY initializes. Without it the
   drive on the native USB port would stop working. Wi-Fi/lwIP buffers may be allocated in PSRAM.
   `CONFIG_MDNS_ENABLE_CONSOLE_CLI=n` (no console component in the build).
-- Not yet changed: flash mode (DIO). This will be set for the final board.
+- QIO flash at 80 MHz (`CONFIG_ESPTOOLPY_FLASHMODE_QIO`). OTA refuses images with a different flash mode
+  (`ESP_ERR_OTA_SPI_MODE_MISMATCH`), so changing it needs a cable flash (bootloader + app).
 
 ## Application
 
 | File | Role |
 |---|---|
-| [main/cd_player_main.c](main/cd_player_main.c) | Drive connect/disconnect, disc polling (TEST UNIT READY every 1 s), TOC/CD-TEXT loading, eject/load, serial commands |
+| [main/cd_player_main.c](main/cd_player_main.c) | Drive connect/disconnect, disc polling every 1 s (GESN media events, or TEST UNIT READY), tray lock + eject button, TOC/CD-TEXT loading, eject/load, serial commands |
 | [main/player.c](main/player.c) | Playback engine: a reader task fills 12 × 16-sector chunks (~2.5 s, 450 KB, `NUM_CHUNKS`) in PSRAM; a writer task streams them to I2S in 2-sector slices, applies the volume and tracks the position and the buffered sector count. A generation counter drops stale chunks on seek/stop/unload. Plays continuously across tracks, skips data tracks, stops at the lead-out. Reads are retried 3×; slow (>500 ms) and failed reads are logged |
 | [main/player.h](main/player.h) | Player API, status snapshot, volume cap (persisted in NVS by `player.c`) (`PLAYER_VOLUME_MAX`, `PLAYER_VOLUME_STEP`, `player_volume_display()`) |
 | [main/audio_out.c](main/audio_out.c) | I2S0 master, 44.1 kHz, 16-bit stereo, Philips format, MCLK = 256·fs. DMA auto-clear outputs silence on pause or underrun. Pin check and test-tone diagnostics |
@@ -183,6 +190,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/net.c](main/net.c) | Wi-Fi station: credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS hostname `cdplayer` (`CONFIG_CD_HOSTNAME`), starts the HTTP server on the first IP address |
 | [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
 | [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
+| [main/auth.c](main/auth.c) | Admin password (HTTP Basic auth) for firmware upload and settings |
 | [main/captive_dns.c](main/captive_dns.c) | DNS server for the setup AP: every A query answered with 192.168.4.1 |
 | [main/meta.c](main/meta.c) | Album metadata: cache lookup, MusicBrainz disc ID query, Cover Art Archive download, JPEG decode + scale for the screen (see below) |
 | [main/discid.c](main/discid.c) | MusicBrainz disc ID (SHA-1 + base64 over the TOC; own SHA-1, since mbedTLS 4 doesn't export it) |
@@ -245,7 +253,8 @@ Works on phones. It refreshes once per second.
 - **Settings:** autoplay, Wi-Fi network (save and reconnect), firmware info, firmware upload (same as
   `tools/ota.py`; waits for the reboot and reports the running version), reboot, memory and storage use.
 
-No authentication, like OTA. The JSON API can also be used by scripts:
+Player controls need no login; settings and firmware upload need the admin password if one is set (see above).
+The JSON API can also be used by scripts:
 
 | Request | Function |
 |---|---|
@@ -256,6 +265,7 @@ No authentication, like OTA. The JSON API can also be used by scripts:
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
 | `GET /api/wifi/scan` | Nearby networks `[{"ssid", "rssi", "open"}]`, strongest first (takes ~2 s) |
 | `POST /api/reboot` | Restart |
+| `POST /api/admin` | URL-encoded form `pass=..`: set the admin password (empty = remove) |
 
 Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
 
@@ -275,6 +285,8 @@ Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
 | `t` | Diagnostics: 1 kHz test tone for 3 s (pauses the player) |
 | `w` | Network/firmware info: Wi-Fi state, IP, RSSI, firmware version/ELF SHA/partition/OTA state, storage use, free heap, album info state (disc ID, source, cover) |
 | `M` | Look up album info / cover online again for the current disc (refreshes the cache) |
+| `E` | Force the de-emphasis filter on all tracks on/off (to audition / test it; not saved) |
+| `P` | Clear the web UI admin password |
 | `W` | Set Wi-Fi credentials (prompts for SSID and password; Enter on an empty SSID clears them) |
 | `h` | Help |
 
@@ -327,6 +339,13 @@ SCK is driven with MCLK = 256·fs from GPIO17. Alternatively, tie SCK to GND to 
 +------------------------------------------------+
 ```
 
+**Backlight** (web UI *Settings > Display*, `POST /api/display`, stored in NVS namespace `display`):
+dimming *only when idle* (default: nothing playing), *always* (also during playback) or *never*; brightness
+when on (1-16, default 16) and dimmed (0-16, default 4); dim after 30 s without activity; off after 10 min
+idle (0 = never, never during playback). Activity = a change of play state, track, volume, disc, status
+message, firmware update or setup AP; saving the settings counts too. The backlight is an AW9364 LED
+driver with 16 levels, set by pulses on GPIO38 (`tdisplay_s3_set_brightness()`).
+
 The cover is only shown when there is one (album info section); the album and title lines then end left of it. The play state symbol sits at the right end of the time line. A Wi-Fi symbol after the buffer value means connected. During a firmware update, the title line shows the progress.
 
 When there is no disc, the title line shows the drive state: Waiting for drive, Drive found..., Loading...,
@@ -362,13 +381,10 @@ No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
 
 ## Next steps
 
-1. De-emphasis filter for tracks flagged with pre-emphasis (rare on commercial CDs).
-2. A UTF-8 font with Latin-1 glyphs for CD-TEXT (accents).
-3. Media change events via `atapi_host_get_media_status()` instead of polling TEST UNIT READY every second.
-4. Power management: spin down / stop the drive after a while in stopped state, dim the backlight.
-5. Physical buttons (transport + eject), with debouncing.
-6. Final board: QIO flash, and a **GPIO-controlled load switch on the drive's 5 V (VBUS)**, so a hung drive
-   can be power-cycled automatically. On the T-Display S3, VBUS of the USB-C port isn't switchable.
-8. OTA authentication (token/password).
-9. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
+1. A UTF-8 font with Latin-1 glyphs for CD-TEXT and online album info (accents). Today the display
+   transliterates to ASCII. Needs generated LVGL fonts (`lv_font_conv`) or runtime TTF rendering (LVGL TinyTTF).
+2. Physical buttons (transport + eject), with debouncing.
+3. Final board: a **GPIO-controlled load switch on the drive's 5 V (VBUS)**, so a hung drive can be
+   power-cycled automatically. On the T-Display S3, VBUS of the USB-C port isn't switchable.
+4. Optional: a larger read-ahead buffer (`NUM_CHUNKS`; 10 s ≈ 1.8 MB of PSRAM) if longer read interruptions
    need to be bridged. The drive's own cache already covers several seconds.

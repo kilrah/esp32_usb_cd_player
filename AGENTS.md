@@ -89,4 +89,5 @@ See [README.md](README.md) for the status, hardware/pinout, controls and next st
   exact disc ID and has a cover. Cache files are in `/data/meta/`; `M` (or `api/cmd?c=meta`) forces a new lookup.
 - The app is ~1.6 MB in a 2.5 MB OTA slot (`partitions.csv`). Don't move `nvs` (settings and Wi-Fi credentials live there).
 - `sdkconfig` is generated: put settings in `sdkconfig.defaults` (target is pinned there), delete `sdkconfig` to regenerate.
-- Not yet done, deliberately (prototype board): QIO flash mode. Final button GPIOs are unknown.
+- QIO flash mode is set (since the switch from DIO a cable flash was needed once; OTA refuses flash mode changes).
+  Final button GPIOs are unknown.

@@ -10,6 +10,10 @@
  *   GET  /api/wifi/scan    nearby networks (JSON, takes ~2 s)
  * Unknown URLs redirect to / (captive portal on the setup AP).
  *   POST /api/reboot
+ *   POST /api/admin        form body pass=.. : set the admin password (empty = none)
+ *   POST /api/display      form body mode=never|idle|always&on=1..16&dim=0..16&dim_delay=s&off_delay=s
+ * Firmware upload, Wi-Fi, reboot, admin, and the setup_ap / meta_forget commands need the admin password
+ * if one is set (auth.c).
  * Firmware upload uses POST /ota (ota.c).
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
@@ -21,6 +25,6 @@
 #include "esp_http_server.h"
 
 /** Number of URI handlers web_register() adds */
-#define WEB_URI_HANDLERS 8
+#define WEB_URI_HANDLERS 10
 
 esp_err_t web_register(httpd_handle_t server);

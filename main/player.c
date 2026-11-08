@@ -11,6 +11,7 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include <math.h>
 #include <stdlib.h>
 #include <sys/param.h>
 #include "freertos/FreeRTOS.h"
@@ -34,6 +35,7 @@ static const char *TAG = "player";
 #define READ_RETRIES    3
 #define PREV_RESTART_SECTORS (3 * ATAPI_CD_FRAMES_PER_SECOND)
 #define SLOW_READ_MS    500                                 /* log reads slower than this */
+#define SPINDOWN_S      120                                 /* stop the drive motor after this long without playback */
 #define NVS_NAMESPACE   "player"
 #define NVS_KEY_VOLUME  "volume"
 #define NVS_KEY_AUTOPLAY "autoplay"
@@ -67,10 +69,13 @@ static struct {
     uint32_t read_lba;      /* next sector to read */
     uint32_t play_lba;      /* sector currently being played */
     bool reader_done;       /* reached the end of the playable area */
+    bool spun_down;         /* drive motor stopped by us (power saving); spun up again before reading */
+    int64_t idle_since;     /* esp_timer time playback stopped/paused, 0 while playing */
     bool primed;            /* audio has been played since the last seek (for underrun counting) */
     uint32_t buffered;      /* sectors read ahead and not yet sent to I2S (current generation) */
     esp_timer_handle_t volume_save_timer;
     int volume;
+    bool force_deemph;      /* apply de-emphasis to every track (test / audition) */
     bool autoplay;
     uint32_t underruns;
     uint32_t read_errors;
@@ -91,6 +96,11 @@ static int track_index_for_lba(uint32_t lba)
         }
     }
     return 0;
+}
+
+static bool track_has_preemphasis(uint32_t lba)
+{
+    return P.toc.num_tracks > 0 && atapi_toc_entry_has_preemphasis(&P.toc.tracks[track_index_for_lba(lba)]);
 }
 
 static bool track_is_audio(int idx)
@@ -161,6 +171,40 @@ static void seek_locked(uint32_t lba)
 /* Reader                                                                   */
 /* ------------------------------------------------------------------------ */
 
+/** Spin the drive down after SPINDOWN_S without playback, and up again before reading (reader task) */
+static void manage_spindown(bool want_read)
+{
+    LOCK();
+    bool playing = P.state == PLAYER_PLAYING;
+    bool can = P.has_disc && P.dev;
+    int64_t now = esp_timer_get_time();
+    if (playing) {
+        P.idle_since = 0;
+    } else if (!P.idle_since) {
+        P.idle_since = now;
+    }
+    bool spin_down = can && !playing && !P.spun_down && now - P.idle_since > (int64_t)SPINDOWN_S * 1000000;
+    bool spin_up = can && P.spun_down && (playing || want_read);
+    UNLOCK();
+    if (!spin_down && !spin_up) {
+        return;
+    }
+    xSemaphoreTake(P.dev_lock, portMAX_DELAY);
+    if (P.dev) {
+        int64_t t0 = esp_timer_get_time();
+        esp_err_t err = atapi_host_start_stop(P.dev, spin_up, false);
+        ESP_LOGI(TAG, "Drive %s: %s (%lld ms)", spin_up ? "spin-up" : "spin-down (idle)", esp_err_to_name(err),
+                 (esp_timer_get_time() - t0) / 1000);
+        P.spun_down = spin_down; /* even on error: a read spins the drive up anyway, or fails visibly */
+    }
+    xSemaphoreGive(P.dev_lock);
+}
+
+bool player_is_spun_down(void)
+{
+    return P.spun_down;
+}
+
 static void reader_task(void *arg)
 {
     while (true) {
@@ -183,6 +227,7 @@ static void reader_task(void *arg)
         }
         UNLOCK();
 
+        manage_spindown(false);
         if (!active) {
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
             continue;
@@ -193,6 +238,7 @@ static void reader_task(void *arg)
             continue; /* buffer full; re-check state */
         }
 
+        manage_spindown(true); /* paused with free buffer space, or playing: the drive must turn */
         uint32_t n = MIN((uint32_t)CHUNK_SECTORS, end - lba);
         esp_err_t err = ESP_FAIL;
         int64_t t0 = esp_timer_get_time();
@@ -200,6 +246,15 @@ static void reader_task(void *arg)
         if (P.dev) {
             for (int attempt = 0; attempt < READ_RETRIES && err != ESP_OK; attempt++) {
                 err = atapi_host_read_cd_audio(P.dev, lba, n, c->data);
+                atapi_sense_t sense;
+                if (err == ESP_ERR_ATAPI_CHECK_CONDITION && atapi_host_get_last_sense(P.dev, &sense) == ESP_OK &&
+                        sense.key == ATAPI_SENSE_NOT_READY && sense.asc == 0x04) {
+                    /* Motor stopped (by us, or the drive's own standby timer): spin up, then retry */
+                    ESP_LOGI(TAG, "Drive not spinning (%s), starting it", atapi_sense_to_str(&sense));
+                    atapi_host_start_stop(P.dev, true, false);
+                    P.spun_down = false;
+                    err = atapi_host_read_cd_audio(P.dev, lba, n, c->data);
+                }
                 if (err != ESP_OK) {
                     ESP_LOGW(TAG, "Read LBA %"PRIu32"+%"PRIu32" attempt %d failed: %s (0x%x)", lba, n, attempt + 1,
                              esp_err_to_name(err), err);
@@ -239,6 +294,33 @@ static void reader_task(void *arg)
 /* Writer                                                                   */
 /* ------------------------------------------------------------------------ */
 
+/*
+ * De-emphasis for CDs mastered with pre-emphasis (TOC control bit; 50/15 us, -10 dB shelf above ~10 kHz).
+ * First-order IIR H(z) = (b0 + b1 z^-1) / (1 + a1 z^-1) at 44.1 kHz. The coefficients are a minimax fit to
+ * the analog curve (1 + s*15us) / (1 + s*50us), 0 dB at DC: max. 0.07 dB error over 20 Hz..20 kHz
+ * (plain bilinear transform: 0.9 dB).
+ */
+#define DEEMPH_B0  0.460405558f
+#define DEEMPH_B1 -0.089248819f
+#define DEEMPH_A1 -0.628843262f
+
+typedef struct {
+    float x1[2], y1[2];
+} deemph_state_t;
+
+static void apply_deemphasis(int16_t *s, size_t frames, deemph_state_t *st)
+{
+    for (size_t i = 0; i < frames; i++) {
+        for (int ch = 0; ch < 2; ch++) {
+            float x = s[2 * i + ch];
+            float y = DEEMPH_B0 * x + DEEMPH_B1 * st->x1[ch] - DEEMPH_A1 * st->y1[ch];
+            st->x1[ch] = x;
+            st->y1[ch] = y;
+            s[2 * i + ch] = (int16_t)(y > 32767.0f ? 32767 : y < -32768.0f ? -32768 : lrintf(y));
+        }
+    }
+}
+
 static void apply_volume(int16_t *s, size_t n, int volume)
 {
     if (volume >= 100) {
@@ -255,6 +337,8 @@ static void writer_task(void *arg)
 {
     chunk_t *c = NULL;
     uint32_t offset = 0; /* sectors of c already played */
+    deemph_state_t deemph = {0};
+    uint32_t next_lba = UINT32_MAX; /* LBA expected next: a jump resets the filter state */
 
     while (true) {
         LOCK();
@@ -297,6 +381,16 @@ static void writer_task(void *arg)
         uint32_t n = MIN((uint32_t)SLICE_SECTORS, c->count - offset);
         int16_t *pcm = (int16_t *)(c->data + offset * ATAPI_CD_AUDIO_SECTOR_SIZE);
         size_t bytes = n * ATAPI_CD_AUDIO_SECTOR_SIZE;
+        LOCK();
+        bool emph = P.force_deemph || track_has_preemphasis(c->lba + offset);
+        UNLOCK();
+        if (emph) {
+            if (c->lba + offset != next_lba) {
+                memset(&deemph, 0, sizeof(deemph));
+            }
+            apply_deemphasis(pcm, bytes / 4, &deemph);
+        }
+        next_lba = c->lba + offset + n;
         apply_volume(pcm, bytes / 2, volume);
 
         LOCK();
@@ -462,6 +556,8 @@ void player_load_disc(const atapi_toc_t *toc, atapi_cd_text_t *cdtext)
     P.meta = NULL;
     P.toc = *toc;
     P.cdtext = cdtext;
+    P.spun_down = false;
+    P.idle_since = 0;
     P.has_disc = true;
     P.state = PLAYER_STOPPED;
     P.underruns = 0;
@@ -498,6 +594,19 @@ void player_set_metadata(player_meta_t *meta)
     if (!P.has_disc) {
         free(meta);
     }
+}
+
+void player_force_deemphasis(bool on)
+{
+    LOCK();
+    P.force_deemph = on;
+    UNLOCK();
+    ESP_LOGI(TAG, "De-emphasis forced on all tracks: %s", on ? "on" : "off");
+}
+
+bool player_deemphasis_forced(void)
+{
+    return P.force_deemph;
 }
 
 void player_set_message(const char *msg)
@@ -645,6 +754,8 @@ void player_get_status(player_status_t *st)
         st->track_pos = P.play_lba - t->lba;
         st->track_len = atapi_toc_track_length(&P.toc, idx);
         st->disc_len = P.toc.leadout_lba;
+        st->preemphasis = atapi_toc_entry_has_preemphasis(t);
+        st->deemphasis = st->preemphasis || P.force_deemph;
 
         copy_text(st->album, album_text());
         copy_text(st->artist, artist_text());

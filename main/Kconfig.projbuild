@@ -26,6 +26,14 @@ menu "CD player"
             display while the AP is on. At least 8 characters; shorter = open network (not recommended:
             the web UI has no login and allows firmware uploads).
 
+    config CD_ADMIN_PASSWORD
+        string "Default admin password"
+        default ""
+        help
+            Password for firmware upload and settings changes in the web UI (HTTP Basic auth, any user name).
+            Used until a password is set in the web UI (stored in NVS). Empty = no protection.
+            The serial command 'P' clears the password.
+
     config CD_META_CONTACT
         string "Contact for the MusicBrainz User-Agent"
         default ""

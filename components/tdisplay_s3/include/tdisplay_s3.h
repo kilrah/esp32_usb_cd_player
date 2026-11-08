@@ -47,8 +47,14 @@ extern "C" {
  */
 esp_err_t tdisplay_s3_init(lv_display_t **disp);
 
-/** Backlight on/off */
+/** Backlight on (full brightness) / off */
 void tdisplay_s3_backlight(bool on);
+
+#define TDS3_BRIGHTNESS_MAX 16
+
+/** Backlight brightness 0 (off) .. TDS3_BRIGHTNESS_MAX (AW9364 driver, 16 steps) */
+void tdisplay_s3_set_brightness(int level);
+int tdisplay_s3_get_brightness(void);
 
 #ifdef __cplusplus
 }

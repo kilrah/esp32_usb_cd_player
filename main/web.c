@@ -25,6 +25,8 @@
 #include "ota.h"
 #include "storage.h"
 #include "app.h"
+#include "auth.h"
+#include "ui.h"
 #include "lwip/sockets.h"
 #include "esp_netif.h"
 #include "meta.h"
@@ -148,10 +150,11 @@ static esp_err_t send_status(httpd_req_t *req)
     const uint32_t fps = ATAPI_CD_FRAMES_PER_SECOND;
     jw_printf(w, "{\"state\":\"%s\",\"track\":%d,\"tracks\":%d,\"pos\":%"PRIu32",\"len\":%"PRIu32
               ",\"disc_len\":%"PRIu32",\"volume\":%d,\"buffer\":%d,\"buffer_ms\":%"PRIu32
-              ",\"underruns\":%"PRIu32",\"read_errors\":%"PRIu32",\"autoplay\":%s,\"ota\":%d",
+              ",\"underruns\":%"PRIu32",\"read_errors\":%"PRIu32",\"autoplay\":%s,\"ota\":%d,\"preemphasis\":%s,\"deemphasis\":%s",
               state_name(st.state), st.track, st.num_tracks, st.track_pos / fps, st.track_len / fps,
               st.disc_len / fps, player_volume_display(st.volume), st.buffer_pct, st.buffer_ms, st.underruns,
-              st.read_errors, player_get_autoplay() ? "true" : "false", ota_progress());
+              st.read_errors, player_get_autoplay() ? "true" : "false", ota_progress(),
+              st.preemphasis ? "true" : "false", st.deemphasis ? "true" : "false");
     jw_kv_str(w, "album", st.album);
     jw_kv_str(w, "artist", st.artist);
     jw_kv_str(w, "title", st.title);
@@ -185,6 +188,7 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "partition", esp_ota_get_running_partition()->label);
     jw_kv_str(w, "state", ota_running_state_name());
     jw_kv_str(w, "reset", ota_reset_reason_name());
+    jw_printf(w, ",\"auth\":%s", auth_enabled() ? "true" : "false");
 
     size_t fs_total = 0, fs_used = 0;
     storage_get_info(&fs_total, &fs_used);
@@ -195,6 +199,12 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "state", meta_state_name(mi.state));
     jw_kv_str(w, "release", mi.release);
     jw_kv_str(w, "error", mi.error);
+
+    ui_backlight_cfg_t bl;
+    ui_get_backlight(&bl);
+    jw_printf(w, "},\"display\":{\"on\":%d,\"dim\":%d,\"dim_delay\":%d,\"off_delay\":%d", bl.on_level,
+              bl.dim_level, bl.dim_delay_s, bl.off_delay_s);
+    jw_kv_str(w, "mode", ui_dim_mode_name(bl.mode));
 
     jw_printf(w, "},\"sys\":{\"heap_internal\":%u,\"heap_internal_min\":%u,\"heap_psram\":%u,"
               "\"fs_used\":%u,\"fs_total\":%u}}",
@@ -267,8 +277,14 @@ static esp_err_t cmd_handler(httpd_req_t *req)
     } else if (!strcmp(c, "meta")) {
         meta_refresh();
     } else if (!strcmp(c, "setup_ap")) {
+        if (!auth_check(req)) {
+            return ESP_OK;
+        }
         net_setup_ap(arg != 0);
     } else if (!strcmp(c, "meta_forget")) {
+        if (!auth_check(req)) {
+            return ESP_OK;
+        }
         meta_forget();
     } else if (!strcmp(c, "autoplay")) {
         player_set_autoplay(arg != 0);
@@ -318,6 +334,9 @@ static esp_err_t recv_body(httpd_req_t *req, char *buf, size_t size)
 
 static esp_err_t wifi_handler(httpd_req_t *req)
 {
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
     char body[256];
     char ssid[3 * 32 + 1] = "", pass[3 * 64 + 1] = ""; /* URL-encoded sizes */
     if (recv_body(req, body, sizeof(body)) != ESP_OK) {
@@ -406,8 +425,59 @@ static esp_err_t not_found_handler(httpd_req_t *req, httpd_err_code_t err)
     return httpd_resp_send(req, NULL, 0);
 }
 
+static esp_err_t admin_handler(httpd_req_t *req)
+{
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
+    char body[3 * AUTH_PASSWORD_MAX + 16];
+    char pass[3 * AUTH_PASSWORD_MAX + 1] = "";
+    if (recv_body(req, body, sizeof(body)) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad request");
+    }
+    httpd_query_key_value(body, "pass", pass, sizeof(pass));
+    url_decode(pass);
+    if (auth_set_password(pass) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Password too long");
+    }
+    return httpd_resp_sendstr(req, pass[0] ? "Admin password set\n" : "Admin password removed\n");
+}
+
+/** Backlight settings; fields left out keep their value */
+static esp_err_t display_handler(httpd_req_t *req)
+{
+    char body[160], v[16];
+    if (recv_body(req, body, sizeof(body)) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad request");
+    }
+    ui_backlight_cfg_t c;
+    ui_get_backlight(&c);
+    if (httpd_query_key_value(body, "mode", v, sizeof(v)) == ESP_OK) {
+        c.mode = !strcmp(v, "never") ? UI_DIM_NEVER : !strcmp(v, "always") ? UI_DIM_ALWAYS : UI_DIM_IDLE;
+    }
+    if (httpd_query_key_value(body, "on", v, sizeof(v)) == ESP_OK) {
+        c.on_level = atoi(v);
+    }
+    if (httpd_query_key_value(body, "dim", v, sizeof(v)) == ESP_OK) {
+        c.dim_level = atoi(v);
+    }
+    if (httpd_query_key_value(body, "dim_delay", v, sizeof(v)) == ESP_OK) {
+        c.dim_delay_s = atoi(v);
+    }
+    if (httpd_query_key_value(body, "off_delay", v, sizeof(v)) == ESP_OK) {
+        c.off_delay_s = atoi(v);
+    }
+    if (ui_set_backlight(&c) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Applied, but saving failed");
+    }
+    return send_status(req);
+}
+
 static esp_err_t reboot_handler(httpd_req_t *req)
 {
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
     ESP_LOGI(TAG, "Reboot requested from the web UI");
     httpd_resp_sendstr(req, "Rebooting\n");
     vTaskDelay(pdMS_TO_TICKS(300));
@@ -424,6 +494,8 @@ esp_err_t web_register(httpd_handle_t server)
         {.uri = "/api/cmd", .method = HTTP_POST, .handler = cmd_handler},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
+        {.uri = "/api/admin", .method = HTTP_POST, .handler = admin_handler},
+        {.uri = "/api/display", .method = HTTP_POST, .handler = display_handler},
         {.uri = "/api/cover", .method = HTTP_GET, .handler = cover_handler},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = scan_handler},
     };
