@@ -1,10 +1,10 @@
-This project started from Espressif's USB Host MSC example. The MSC driver has been replaced by the custom `components/usb_host_atapi` component.
+This project started from Espressif's USB Host MSC example. The MSC driver has been replaced by the custom `components/esp_usb_host_atapi` component.
 The goal of this project is to be able to read an audio CD using a drive connected to the USB Host port instead of a flash drive. The audio will then be fed into an i2s DAC and offer a user interface with a display and buttons.
 
 Current state: a working CD player (I2S output to a PCM5102, LVGL UI on the T-Display S3, controlled by serial commands; physical buttons to come).
 Wi-Fi with OTA firmware updates and a LittleFS partition for cached metadata have been added (see README).
 See [README.md](README.md) for the status, hardware/pinout, controls and next steps, and
-[components/usb_host_atapi/README.md](components/usb_host_atapi/README.md) for the driver design.
+[components/esp_usb_host_atapi/README.md](components/esp_usb_host_atapi/README.md) for the driver design.
 
 ## Working notes for agents
 

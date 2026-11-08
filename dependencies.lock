@@ -1,4 +1,10 @@
 dependencies:
+  esp_usb_host_atapi:
+    dependencies: []
+    source:
+      path: components/esp_usb_host_atapi
+      type: local
+    version: 0.1.0
   espressif/cjson:
     component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
     dependencies:
@@ -94,13 +100,8 @@ dependencies:
       path: components/tdisplay_s3
       type: local
     version: '*'
-  usb_host_atapi:
-    dependencies: []
-    source:
-      path: components/usb_host_atapi
-      type: local
-    version: 0.1.0
 direct_dependencies:
+- esp_usb_host_atapi
 - espressif/cjson
 - espressif/esp_jpeg
 - espressif/esp_lvgl_port
@@ -110,7 +111,6 @@ direct_dependencies:
 - joltwallet/littlefs
 - lvgl/lvgl
 - tdisplay_s3
-- usb_host_atapi
-manifest_hash: 90551caed514f1cf409122b01824792bbe46e0f2884e1da9e05c1e787accfaa9
+manifest_hash: e8f9cfc0df6a4a55ab9000a0bb980c3a733bf2d6ee58b50d8db3beb66fd0ee4e
 target: esp32s3
 version: 3.0.0

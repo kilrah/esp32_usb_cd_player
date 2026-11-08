@@ -4,7 +4,7 @@ A standalone audio CD player. It reads audio CDs from a USB optical drive connec
 USB Host port, plays them through a PCM5102 I2S DAC, and shows track info on the LilyGO T-Display S3's screen.
 
 The project started from Espressif's USB Host MSC example. The MSC driver has been replaced by
-the custom [`usb_host_atapi`](components/usb_host_atapi/README.md) component.
+the custom [`esp_usb_host_atapi`](components/esp_usb_host_atapi/README.md) component.
 
 ## Status
 

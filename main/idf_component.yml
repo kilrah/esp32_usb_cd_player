@@ -1,8 +1,8 @@
 ## IDF Component Manager Manifest File
 dependencies:
   idf: ">=6.0"
-  usb_host_atapi:
-    path: ../components/usb_host_atapi
+  esp_usb_host_atapi:
+    path: ../components/esp_usb_host_atapi
   tdisplay_s3:
     path: ../components/tdisplay_s3
   espressif/esp_lvgl_port: "^2.4.0"
