@@ -1,10 +1,11 @@
 /*
- * USB CD reader - test application for the usb_host_atapi component
+ * USB CD player (LilyGO T-Display S3 + USB optical drive + PCM5102 I2S DAC)
  *
- * - Detects an optical drive connected to the USB Host port
- * - Waits for an audio CD, reads and prints the TOC
- * - Reads a few seconds of CD-DA audio and reports throughput and levels
- * - BOOT button ejects / loads the tray
+ * - Detects an optical drive on the USB Host port, waits for an audio CD
+ * - Reads TOC and CD-TEXT, streams CD-DA to the I2S DAC (player.c)
+ * - Shows track info / transport state on the display (ui.c)
+ * - Controlled via serial commands on the console UART (type 'h' for help);
+ *   physical buttons will be added later
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -12,31 +13,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <math.h>
-#include <sys/param.h>
-#include "esp_heap_caps.h"
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "esp_timer.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "driver/gpio.h"
+#include "driver/uart.h"
 #include "usb/usb_host.h"
 #include "usb/atapi_host.h"
-#include "status_led.h"
+#include "player.h"
+#include "audio_out.h"
+#include "ui.h"
 
 static const char *TAG = "cd";
 
-#define BUTTON_PIN          GPIO_NUM_0  /* BOOT button: eject / load */
-#define STATUS_LED_PIN      -1          /* No WS2812 on the T-Display S3 (GPIO48 is LCD D7). -1 = disabled */
-#define READ_CHUNK_SECTORS  16          /* sectors per read call (37632 bytes) */
-#define TEST_READ_SECONDS   5
+#define CD_READ_SPEED_KBPS  (4 * ATAPI_SPEED_1X_KBPS)  /* 4x: plenty of margin, less noise than max */
 
 typedef enum {
     APP_DEVICE_CONNECTED,
     APP_DEVICE_DISCONNECTED,
-    APP_BUTTON,
+    APP_EJECT_TOGGLE,
 } app_msg_id_t;
 
 typedef struct {
@@ -50,6 +47,8 @@ typedef struct {
 static QueueHandle_t s_queue;
 
 /* ------------------------------------------------------------------------ */
+/* USB                                                                      */
+/* ------------------------------------------------------------------------ */
 
 static void atapi_event_cb(const atapi_host_event_t *event, void *arg)
 {
@@ -62,22 +61,6 @@ static void atapi_event_cb(const atapi_host_event_t *event, void *arg)
         msg.handle = event->device.handle;
     }
     xQueueSend(s_queue, &msg, portMAX_DELAY);
-}
-
-static void IRAM_ATTR button_isr(void *arg)
-{
-    static int64_t last_us;
-    int64_t now = esp_timer_get_time();
-    if (now - last_us < 300000) { /* debounce */
-        return;
-    }
-    last_us = now;
-    BaseType_t woken = pdFALSE;
-    app_msg_t msg = {.id = APP_BUTTON};
-    xQueueSendFromISR(s_queue, &msg, &woken);
-    if (woken) {
-        portYIELD_FROM_ISR();
-    }
 }
 
 static void usb_lib_task(void *arg)
@@ -103,6 +86,102 @@ static void usb_lib_task(void *arg)
     }
 }
 
+/* ------------------------------------------------------------------------ */
+/* Input: serial commands                                                   */
+/* ------------------------------------------------------------------------ */
+
+static void post_eject(void)
+{
+    app_msg_t msg = {.id = APP_EJECT_TOGGLE};
+    xQueueSend(s_queue, &msg, 0);
+}
+
+static const char *state_name(player_state_t s)
+{
+    static const char *names[] = {"no disc", "stopped", "playing", "paused"};
+    return names[s];
+}
+
+static void print_status(void)
+{
+    player_status_t st;
+    player_get_status(&st);
+    uint32_t pos = st.track_pos / ATAPI_CD_FRAMES_PER_SECOND, len = st.track_len / ATAPI_CD_FRAMES_PER_SECOND;
+    printf("STATUS state=%s track=%d/%d pos=%02"PRIu32":%02"PRIu32"/%02"PRIu32":%02"PRIu32" vol=%d buf=%d%%(%"PRIu32"ms) "
+           "underruns=%"PRIu32" read_errors=%"PRIu32" title=\"%s\"%s%s\n",
+           state_name(st.state), st.track, st.num_tracks, pos / 60, pos % 60, len / 60, len % 60, player_volume_display(st.volume),
+           st.buffer_pct, st.buffer_ms, st.underruns, st.read_errors, st.state == PLAYER_NO_DISC ? st.message : st.title,
+           st.performer[0] ? " by " : "", st.performer);
+}
+
+static void print_help(void)
+{
+    printf("Commands: p=play/pause s=stop n=next b=previous f/r=+/-10s +/-=volume e=eject/load\n"
+           "          <number><Enter>=play track, i=status, h=help\n"
+           "          a=check I2S pins, t=1 kHz test tone (3 s)\n");
+}
+
+/** Simple command interface on the console UART, so the player can be driven without buttons */
+static void console_task(void *arg)
+{
+    const uart_port_t port = CONFIG_ESP_CONSOLE_UART_NUM;
+    ESP_ERROR_CHECK(uart_driver_install(port, 256, 0, 0, NULL, 0));
+    uart_set_pin(port, CONFIG_ESP_CONSOLE_UART_TX_GPIO, CONFIG_ESP_CONSOLE_UART_RX_GPIO,
+                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    print_help();
+
+    int number = -1;
+    while (true) {
+        uint8_t ch;
+        if (uart_read_bytes(port, &ch, 1, portMAX_DELAY) != 1) {
+            continue;
+        }
+        if (isdigit(ch)) {
+            number = (number < 0 ? 0 : number * 10) + (ch - '0');
+            continue;
+        }
+        switch (ch) {
+        case '\r':
+        case '\n':
+            if (number > 0) {
+                player_command(PLAYER_CMD_TRACK, number);
+            }
+            break;
+        case 'p': player_command(PLAYER_CMD_PLAY_PAUSE, 0); break;
+        case 's': player_command(PLAYER_CMD_STOP, 0); break;
+        case 'n': player_command(PLAYER_CMD_NEXT, 0); break;
+        case 'b': player_command(PLAYER_CMD_PREV, 0); break;
+        case 'f': player_command(PLAYER_CMD_SEEK_REL, 10); break;
+        case 'r': player_command(PLAYER_CMD_SEEK_REL, -10); break;
+        case '+': player_command(PLAYER_CMD_VOLUME_REL, PLAYER_VOLUME_STEP); break;
+        case '-': player_command(PLAYER_CMD_VOLUME_REL, -PLAYER_VOLUME_STEP); break;
+        case 'e': post_eject(); break;
+        case 'a': audio_out_check_pins(); break;
+        case 't': {
+            player_status_t st;
+            player_get_status(&st);
+            if (st.state == PLAYER_PLAYING) {
+                player_command(PLAYER_CMD_PAUSE, 0); /* don't write to I2S from two tasks */
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            printf("Test tone 1 kHz, 3 s\n");
+            audio_out_test_tone(1000, 3000);
+            break;
+        }
+        case 'i': break;
+        case 'h': print_help(); break;
+        default:
+            number = -1; /* unknown character: discard a partially typed track number */
+            continue;
+        }
+        number = -1;
+        vTaskDelay(pdMS_TO_TICKS(50)); /* let the player apply the command */
+        print_status();
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Disc handling                                                            */
 /* ------------------------------------------------------------------------ */
 
 static void lba_to_msf(uint32_t lba, int *m, int *s, int *f)
@@ -145,7 +224,7 @@ static void print_toc(const atapi_toc_t *toc, const atapi_cd_text_t *cdt)
             printf("   %s", title);
         }
         if (perf && (!artist || strcmp(perf, artist) != 0)) {
-            printf(" - %s", perf); /* only when it differs from the album artist */
+            printf(" - %s", perf);
         }
         if (atapi_toc_entry_has_preemphasis(t)) {
             printf("  (pre-emphasis)");
@@ -155,100 +234,33 @@ static void print_toc(const atapi_toc_t *toc, const atapi_cd_text_t *cdt)
     printf("\n");
 }
 
-/** Read a few seconds of the first audio track, report throughput and signal levels */
-static void audio_read_test(atapi_host_device_handle_t dev, const atapi_toc_t *toc)
+static bool load_disc(atapi_host_device_handle_t dev)
 {
-    int idx = -1;
-    for (int i = 0; i < toc->num_tracks; i++) {
-        if (!atapi_toc_entry_is_data(&toc->tracks[i])) {
-            idx = i;
-            break;
-        }
-    }
-    if (idx < 0) {
-        ESP_LOGW(TAG, "No audio tracks on this disc");
-        return;
-    }
-
-    const atapi_toc_entry_t *track = &toc->tracks[idx];
-    uint32_t total = MIN(atapi_toc_track_length(toc, idx), (uint32_t)(TEST_READ_SECONDS * ATAPI_CD_FRAMES_PER_SECOND));
-    const size_t buf_size = READ_CHUNK_SECTORS * ATAPI_CD_AUDIO_SECTOR_SIZE;
-    int16_t *buf = heap_caps_malloc(buf_size, MALLOC_CAP_DEFAULT);
-    if (!buf) {
-        ESP_LOGE(TAG, "No memory for audio buffer");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Reading %"PRIu32" sectors (%.1f s) of track %d from LBA %"PRIu32"...",
-             total, total / (float)ATAPI_CD_FRAMES_PER_SECOND, track->number, track->lba);
-
-    /* Spin-up / seek latency of the first read is measured separately */
-    int64_t t0 = esp_timer_get_time();
-    esp_err_t err = atapi_host_read_cd_audio(dev, track->lba, 1, buf);
-    int64_t t_first = esp_timer_get_time() - t0;
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "First READ CD failed: %s (0x%x)", esp_err_to_name(err), err);
-        free(buf);
-        return;
-    }
-
-    int16_t peak_l = 0, peak_r = 0;
-    double sum_sq = 0;
-    uint64_t samples = 0;
-    uint32_t lba = track->lba, done = 0;
-
-    t0 = esp_timer_get_time();
-    while (done < total) {
-        uint32_t n = MIN(total - done, (uint32_t)READ_CHUNK_SECTORS);
-        err = atapi_host_read_cd_audio(dev, lba, n, buf);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "READ CD at LBA %"PRIu32" failed: %s (0x%x)", lba, esp_err_to_name(err), err);
-            break;
-        }
-        size_t frames = n * ATAPI_CD_AUDIO_SECTOR_SIZE / 4;
-        for (size_t i = 0; i < frames; i++) {
-            int16_t l = buf[2 * i], r = buf[2 * i + 1];
-            peak_l = MAX(peak_l, (int16_t)abs(l));
-            peak_r = MAX(peak_r, (int16_t)abs(r));
-            sum_sq += (double)l * l + (double)r * r;
-        }
-        samples += frames * 2;
-        lba += n;
-        done += n;
-    }
-    int64_t elapsed = esp_timer_get_time() - t0;
-
-    if (done > 0) {
-        float kbps = done * ATAPI_CD_AUDIO_SECTOR_SIZE / 1024.0f / (elapsed / 1e6f);
-        float rms = sqrt(sum_sq / samples);
-        ESP_LOGI(TAG, "First sector latency: %lld ms", t_first / 1000);
-        ESP_LOGI(TAG, "Read %"PRIu32" sectors in %lld ms: %.1f KiB/s = %.2fx realtime",
-                 done, elapsed / 1000, kbps, kbps / (44100 * 4 / 1024.0f));
-        ESP_LOGI(TAG, "Peak L %d (%.1f dBFS), peak R %d (%.1f dBFS), RMS %.1f dBFS",
-                 peak_l, 20 * log10f((peak_l + 1) / 32768.0f),
-                 peak_r, 20 * log10f((peak_r + 1) / 32768.0f),
-                 20 * log10f((rms + 1) / 32768.0f));
-        ESP_LOG_BUFFER_HEX(TAG, buf, 32);
-    }
-    free(buf);
-}
-
-static bool on_disc_ready(atapi_host_device_handle_t dev)
-{
-    static atapi_toc_t toc; /* ~1 KB, keep off the stack */
-    status_led_set(STATUS_BUSY);
+    static atapi_toc_t toc; /* ~1 KB */
+    player_set_message("Reading disc...");
     esp_err_t err = atapi_host_read_toc(dev, &toc);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "READ TOC failed: %s (0x%x)", esp_err_to_name(err), err);
+        player_set_message("Cannot read disc");
         return false;
     }
-    static atapi_cd_text_t cdtext; /* ~3.3 KB */
-    err = atapi_host_read_cd_text(dev, &cdtext);
-    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "READ CD-TEXT failed: %s (0x%x)", esp_err_to_name(err), err);
+
+    atapi_cd_text_t *cdtext = calloc(1, sizeof(*cdtext));
+    err = cdtext ? atapi_host_read_cd_text(dev, cdtext) : ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        if (err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "READ CD-TEXT failed: %s (0x%x)", esp_err_to_name(err), err);
+        }
+        free(cdtext);
+        cdtext = NULL;
     }
-    print_toc(&toc, err == ESP_OK ? &cdtext : NULL);
-    atapi_cd_text_free(&cdtext);    audio_read_test(dev, &toc);
+    print_toc(&toc, cdtext);
+
+    err = atapi_host_set_speed(dev, CD_READ_SPEED_KBPS);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SET CD SPEED not accepted (%s), using drive default", esp_err_to_name(err));
+    }
+    player_load_disc(&toc, cdtext); /* player owns cdtext now */
     return true;
 }
 
@@ -259,28 +271,15 @@ void app_main(void)
     s_queue = xQueueCreate(8, sizeof(app_msg_t));
     assert(s_queue);
 
-    if (STATUS_LED_PIN >= 0 && status_led_init(STATUS_LED_PIN) != ESP_OK) {
-        ESP_LOGW(TAG, "Status LED not available");
-    }
-
-
-    const gpio_config_t btn = {
-        .pin_bit_mask = BIT64(BUTTON_PIN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&btn));
-    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_LOWMED));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BUTTON_PIN, button_isr, NULL));
-
+    ESP_ERROR_CHECK(player_init());
+    ESP_ERROR_CHECK(ui_init());
     xTaskCreate(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL);
+    xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "Waiting for USB optical drive...");
-    status_led_set(STATUS_WAIT_DRIVE);
 
     atapi_host_device_handle_t dev = NULL;
-    bool disc_ready = false;
+    bool disc_loaded = false;
     bool tray_open = false;
     esp_err_t last_state = ESP_FAIL;
 
@@ -293,41 +292,45 @@ void app_main(void)
                     ESP_LOGW(TAG, "Only one drive supported, ignoring device %d", msg.address);
                     break;
                 }
+                player_set_message("Drive found...");
                 esp_err_t err = atapi_host_install_device(msg.address, &dev);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Device %d is not a usable optical drive: %s", msg.address, esp_err_to_name(err));
+                    player_set_message("Unsupported USB device");
                     dev = NULL;
-                    status_led_set(STATUS_ERROR);
                     break;
                 }
-                status_led_set(STATUS_DISC_LOADING);
                 atapi_host_device_info_t info;
                 atapi_host_get_device_info(dev, &info);
                 ESP_LOGI(TAG, "Optical drive connected: %s %s (rev %s), VID 0x%04x PID 0x%04x",
                          info.vendor, info.product, info.revision, info.vid, info.pid);
-                disc_ready = false;
+                player_set_device(dev);
+                disc_loaded = false;
                 last_state = ESP_FAIL;
                 break;
             }
             case APP_DEVICE_DISCONNECTED:
                 if (dev && msg.handle == dev) {
                     ESP_LOGI(TAG, "Optical drive disconnected");
+                    player_unload_disc();
+                    player_set_device(NULL);
                     atapi_host_uninstall_device(dev);
                     dev = NULL;
-                    disc_ready = false;
+                    disc_loaded = false;
+                    player_set_message("Waiting for drive");
                 }
-                status_led_set(STATUS_WAIT_DRIVE);
                 break;
-            case APP_BUTTON:
-                /* Ignore glitches: the button must still be held after a short delay */
-                vTaskDelay(pdMS_TO_TICKS(50));
-                if (gpio_get_level(BUTTON_PIN) != 0) {
-                    break;
-                }
+            case APP_EJECT_TOGGLE:
                 if (dev) {
                     tray_open = !tray_open;
                     ESP_LOGI(TAG, "%s tray", tray_open ? "Ejecting" : "Loading");
-                    status_led_set(STATUS_DISC_LOADING);
+                    if (tray_open) {
+                        player_unload_disc();
+                        disc_loaded = false;
+                        player_set_message("Ejecting...");
+                    } else {
+                        player_set_message("Loading...");
+                    }
                     esp_err_t err = tray_open ? atapi_host_eject(dev) : atapi_host_load(dev);
                     if (err != ESP_OK) {
                         atapi_sense_t sense;
@@ -336,7 +339,7 @@ void app_main(void)
                                  esp_err_to_name(err), err, sense.key, sense.asc, sense.ascq,
                                  atapi_sense_to_str(&sense));
                     }
-                    disc_ready = false;
+                    last_state = ESP_FAIL; /* refresh the message on the next poll */
                 }
                 break;
             }
@@ -355,30 +358,28 @@ void app_main(void)
                 ESP_LOGI(TAG, "No disc (%s)", atapi_sense_to_str(&s));
                 if (s.ascq == 0x02) {
                     tray_open = true;
-                } else if (s.ascq == 0x01) {
+                    player_set_message("Tray open");
+                } else {
                     tray_open = false;
+                    player_set_message("No disc");
                 }
             } else if (state == ESP_ERR_ATAPI_NOT_READY) {
                 ESP_LOGI(TAG, "Disc becoming ready...");
+                player_set_message("Loading...");
             } else if (state != ESP_OK) {
                 ESP_LOGW(TAG, "Drive state: %s (0x%x)", esp_err_to_name(state), state);
+                player_set_message("Drive error");
             }
             last_state = state;
         }
-        if (state == ESP_ERR_ATAPI_NO_MEDIUM) {
-            status_led_set(STATUS_NO_DISC);
-        } else if (state == ESP_ERR_ATAPI_NOT_READY) {
-            status_led_set(STATUS_DISC_LOADING);
-        } else if (state != ESP_OK) {
-            status_led_set(STATUS_ERROR);
-        }
-        if (state == ESP_OK && !disc_ready) {
-            disc_ready = true;
+        if (state == ESP_OK && !disc_loaded) {
             tray_open = false;
             ESP_LOGI(TAG, "Disc ready");
-            status_led_set(on_disc_ready(dev) ? STATUS_DISC_READY : STATUS_ERROR);
-        } else if (state != ESP_OK) {
-            disc_ready = false;
+            disc_loaded = load_disc(dev);
+        } else if (state != ESP_OK && disc_loaded) {
+            ESP_LOGI(TAG, "Disc removed");
+            player_unload_disc();
+            disc_loaded = false;
         }
     }
 }

@@ -1,14 +1,18 @@
 dependencies:
-  espressif/led_strip:
-    component_hash: 027f68f2b57b0dca1d68dff6cc1139d9093825aa808c2bc3ca42bb2ce530fce9
+  espressif/esp_lvgl_port:
+    component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
     dependencies:
     - name: idf
       require: private
       version: '>=5.2'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 3.1.1
+    version: 2.9.0
   espressif/usb:
     component_hash: 99eee72ea224d9117d4c342442717a1f20bf8112e2ab5d7d7038b827874f4c92
     dependencies:
@@ -30,6 +34,26 @@ dependencies:
     source:
       type: idf
     version: 6.1.0
+  lvgl/lvgl:
+    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.4.0
+  tdisplay_s3:
+    dependencies:
+    - name: idf
+      version: '>=6.0'
+    - name: espressif/esp_lvgl_port
+      version: ^2.4.0
+    - name: lvgl/lvgl
+      public: true
+      version: ^9.2.0
+    source:
+      path: components/tdisplay_s3
+      type: local
+    version: '*'
   usb_host_atapi:
     dependencies:
     - name: idf
@@ -42,10 +66,12 @@ dependencies:
       type: local
     version: '*'
 direct_dependencies:
-- espressif/led_strip
+- espressif/esp_lvgl_port
 - espressif/usb
 - idf
+- lvgl/lvgl
+- tdisplay_s3
 - usb_host_atapi
-manifest_hash: 056995cab0246c24dad29da385b836e1a6610701078ecbe7e1103371312bade1
+manifest_hash: 3a2a5a8d3e28b578db6ed90f9cfbabb2b5dc3d9fb87396eeac68362777fea609
 target: esp32s3
 version: 3.0.0

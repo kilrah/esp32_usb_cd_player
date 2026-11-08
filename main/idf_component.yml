@@ -3,4 +3,7 @@ dependencies:
   idf: ">=6.0"
   usb_host_atapi:
     path: ../components/usb_host_atapi
-  espressif/led_strip: "^3.0.0"
+  tdisplay_s3:
+    path: ../components/tdisplay_s3
+  espressif/esp_lvgl_port: "^2.4.0"
+  lvgl/lvgl: "^9.2.0"

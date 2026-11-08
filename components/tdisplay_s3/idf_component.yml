@@ -1,0 +1,7 @@
+description: LilyGO T-Display S3 display (ST7789 i80) + LVGL 9 setup
+dependencies:
+  idf: ">=6.0"
+  espressif/esp_lvgl_port: "^2.4.0"
+  lvgl/lvgl:
+    version: "^9.2.0"
+    public: true
