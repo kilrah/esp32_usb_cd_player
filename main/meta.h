@@ -19,6 +19,7 @@
 #include "discid.h"
 
 #define META_COVER_SIZE 72  /* on-screen cover: META_COVER_SIZE² pixels, RGB565 */
+#define META_CACHE_DIR  "/data/meta" /* <discid>.json + <discid>.jpg */
 
 typedef enum {
     META_IDLE,          /*!< No disc, or a disc with CD-TEXT (no lookup needed) */
@@ -49,6 +50,9 @@ void meta_refresh(void);
 
 /** Delete the current disc's cache entry (the shown data stays until the disc is reloaded) */
 void meta_forget(void);
+
+/** Cache files were changed from outside (import): load the current disc's entry again, if it has one */
+void meta_reload_cache(void);
 
 void meta_get_info(meta_info_t *info);
 const char *meta_state_name(meta_state_t state);

@@ -1,4 +1,4 @@
-idf_component_register(SRCS "cd_player_main.c" "player.c" "audio_out.c" "ui.c" "net.c" "ota.c" "storage.c" "web.c" "meta.c" "discid.c" "captive_dns.c" "auth.c"
+idf_component_register(SRCS "cd_player_main.c" "player.c" "audio_out.c" "ui.c" "net.c" "ota.c" "storage.c" "web.c" "meta.c" "meta_io.c" "discid.c" "captive_dns.c" "auth.c"
                          "fonts/font_text_14.c" "fonts/font_text_20.c"
                     INCLUDE_DIRS ""
                     EMBED_TXTFILES "web/index.html"

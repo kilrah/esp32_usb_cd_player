@@ -25,6 +25,6 @@
 #include "esp_http_server.h"
 
 /** Number of URI handlers web_register() adds */
-#define WEB_URI_HANDLERS 10
+#define WEB_URI_HANDLERS 12
 
 esp_err_t web_register(httpd_handle_t server);

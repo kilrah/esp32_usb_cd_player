@@ -227,6 +227,15 @@ entry. While a lookup runs, a spinner turns in the cover area, on the display an
 takes about 1 s for MusicBrainz and 5-20 s for the cover (archive.org is slow). It runs in its own task and
 doesn't disturb playback.
 
+**Export / import** (web UI, Album info): *Export all* downloads the whole cache as `cdplayer-meta.tar`
+(`meta/<discid>.json` + `.jpg`), generated on the fly. That's about 1.2 MB for 38 discs and takes ~5 s. Windows
+Explorer, 7-Zip and `tar` open it. *Import* takes such a tar: new entries are added, entries for the same disc
+replaced, identical files left alone, and everything else in the cache kept. Only cache files are taken, from any
+folder in the archive: `<28-character disc ID>.json` (a JSON object with that `discid`) and `.jpg` (a JPEG). Other
+files are skipped, so an archive repacked from the extracted folder works too. Re-importing mostly identical data
+takes ~6 s, but writing is slow (~30 KB/s: about 40 s for a full cache into an empty one); the web UI doesn't update
+meanwhile. Playback isn't affected. Import needs the admin password if one is set.
+
 Notes:
 - **TLS:** the certificate bundle with `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY`. Without it,
   archive.org fails verification: its GoDaddy chain ends at the old Class 2 root, which is no longer in the
@@ -262,6 +271,8 @@ The JSON API can also be used by scripts:
 |---|---|
 | `GET /api/status` | Player state, position/length in seconds, volume (%), buffer, counters, CD-TEXT, Wi-Fi, firmware (version, ELF hash prefix, partition, OTA state, uptime), memory, storage |
 | `GET /api/cover` | Cover art of the current disc (cached JPEG), 404 if none |
+| `GET /api/meta/export` | Album info cache as a tar archive (see Album info) |
+| `POST /api/meta/import` | Body: a tar archive (raw, e.g. `curl --data-binary @cdplayer-meta.tar`). Returns `{"imported", "unchanged", "skipped", "failed", "error"}`; HTTP 400 if it isn't a valid tar or is cut off (files before that point are kept) |
 | `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
 | `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `setup_ap&v=1/0`, `speed&v=<kB/s>&m=<1-3>` (test, see above). Returns the status |
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |

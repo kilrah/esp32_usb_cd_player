@@ -246,6 +246,15 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
           <button type="button" id="meta-btn">Look up online again</button>
           <span class="msg">MusicBrainz / Cover Art Archive; CD-TEXT takes precedence</span>
         </div>
+        <form id="meta-import-form" style="margin-top:10px">
+          <input type="file" id="meta-file" accept=".tar">
+          <progress id="meta-prog" max="100" value="0" hidden></progress>
+          <div class="actions">
+            <button type="button" id="meta-export">Export all (.tar)</button>
+            <button type="submit" id="meta-import" disabled>Import</button>
+            <span class="msg" id="meta-msg">Import adds to the stored album info; entries for the same disc are replaced</span>
+          </div>
+        </form>
       </section>
 
       <section>
@@ -450,6 +459,31 @@ vol.addEventListener("input", () => {
 });
 
 $("meta-btn").addEventListener("click", () => cmd("meta"));
+$("meta-export").addEventListener("click", () => { location.href = "/api/meta/export"; });
+$("meta-file").addEventListener("change", e => { $("meta-import").disabled = !e.target.files.length; });
+$("meta-import-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const file = $("meta-file").files[0];
+  if (!file) return;
+  const prog = $("meta-prog"), msg = $("meta-msg"), btn = $("meta-import");
+  btn.disabled = true; prog.hidden = false; prog.value = 0;
+  msg.textContent = "Uploading…";
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/meta/import");
+  xhr.upload.onprogress = ev => { if (ev.lengthComputable) prog.value = 100 * ev.loaded / ev.total; };
+  xhr.onload = () => {
+    prog.hidden = true; btn.disabled = false;
+    let r = null;
+    try { r = JSON.parse(xhr.responseText); } catch (err) {}
+    if (!r) { msg.textContent = xhr.responseText.trim() || `Failed (${xhr.status})`; return; }
+    msg.textContent = `${r.imported} files imported` + (r.unchanged ? `, ${r.unchanged} already up to date` : "") +
+      (r.skipped ? `, ${r.skipped} skipped (not album info)` : "") +
+      (r.failed ? `, ${r.failed} could not be written (storage full?)` : "") + (r.error ? ` – ${r.error}` : "");
+    if (!r.error) { $("meta-file").value = ""; btn.disabled = true; }
+  };
+  xhr.onerror = () => { prog.hidden = true; btn.disabled = false; msg.textContent = "Upload failed"; };
+  xhr.send(file);
+});
 
 for (const id of ["bl-on", "bl-dim"]) $(id).addEventListener("input", e => { $(id + "-v").textContent = e.target.value; });
 $("display-form").addEventListener("submit", async e => {

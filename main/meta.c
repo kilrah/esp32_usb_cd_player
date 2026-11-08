@@ -40,7 +40,7 @@
 
 static const char *TAG = "meta";
 
-#define META_DIR            STORAGE_BASE_PATH "/meta"
+#define META_DIR            META_CACHE_DIR
 #define MB_URL_FMT          "https://musicbrainz.org/ws/2/discid/%s?toc=%s&inc=recordings+artist-credits+release-groups&cdstubs=no&fmt=json"
 #define CAA_URL_FMT         "https://coverartarchive.org/%s/%s/front-250"
 #define MB_MAX_BYTES        (1024 * 1024)
@@ -772,6 +772,17 @@ void meta_forget(void)
         unlink(jpg);
         storage_changed();
         ESP_LOGI(TAG, "Cache entry deleted: %s", json);
+    }
+}
+
+void meta_reload_cache(void)
+{
+    LOCK();
+    bool any = M.discid[0] != 0;
+    M.job_cache = any;
+    UNLOCK();
+    if (any) {
+        xTaskNotifyGive(M.task);
     }
 }
 

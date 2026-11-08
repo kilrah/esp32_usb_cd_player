@@ -30,6 +30,7 @@
 #include "lwip/sockets.h"
 #include "esp_netif.h"
 #include "meta.h"
+#include "meta_io.h"
 #include "web.h"
 
 static const char *TAG = "web";
@@ -385,6 +386,31 @@ static esp_err_t cover_handler(httpd_req_t *req)
     return err == ESP_OK ? httpd_resp_send_chunk(req, NULL, 0) : err;
 }
 
+static esp_err_t meta_export_handler(httpd_req_t *req)
+{
+    return meta_export_tar(req);
+}
+
+/** Body: a tar archive (raw, not multipart). Replies with the counts as JSON. */
+static esp_err_t meta_import_handler(httpd_req_t *req)
+{
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
+    meta_import_result_t res;
+    esp_err_t err = meta_import_tar(req, &res);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "{\"imported\":%d,\"unchanged\":%d,\"skipped\":%d,\"failed\":%d,"
+             "\"error\":\"%s\"}", res.imported, res.unchanged, res.skipped, res.failed,
+             err == ESP_OK ? "" : err == ESP_ERR_INVALID_RESPONSE ? "not a tar archive"
+             : err == ESP_ERR_INVALID_SIZE ? "archive cut off" : esp_err_to_name(err));
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "400 Bad Request");
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
 static esp_err_t scan_handler(httpd_req_t *req)
 {
     const int max = 24;
@@ -502,6 +528,8 @@ esp_err_t web_register(httpd_handle_t server)
         {.uri = "/api/display", .method = HTTP_POST, .handler = display_handler},
         {.uri = "/api/cover", .method = HTTP_GET, .handler = cover_handler},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = scan_handler},
+        {.uri = "/api/meta/export", .method = HTTP_GET, .handler = meta_export_handler},
+        {.uri = "/api/meta/import", .method = HTTP_POST, .handler = meta_import_handler},
     };
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, not_found_handler);
     for (size_t i = 0; i < WEB_URI_HANDLERS; i++) {
