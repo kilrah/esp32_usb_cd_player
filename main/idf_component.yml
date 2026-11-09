@@ -5,7 +5,7 @@ dependencies:
     # Not in the ESP Component Registry yet: pulled from GitHub at a tag. Once published, drop the git line.
     # To work on the driver, point override_path at a local checkout instead (see AGENTS.md).
     git: https://github.com/kilrah/esp_usb_host_atapi.git
-    version: v0.1.0
+    version: v0.1.1
   tdisplay_s3:
     path: ../components/tdisplay_s3
   espressif/esp_lvgl_port: "^2.4.0"
