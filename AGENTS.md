@@ -104,8 +104,12 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
   path: you don't know the user's password and can't restore it. Joining the AP from the PC's spare Wi-Fi
   adapter is risky: Windows asks all adapters' DNS servers, and the captive DNS answers every name with
   192.168.4.1. Ask the user to test with a phone instead.
-- Internal RAM: ~75-84 KB free in steady state, minimum ~40 KB during TLS lookups (mbedTLS, cJSON, Wi-Fi/lwIP
-  buffers are in PSRAM). Keep big buffers in PSRAM; check `w` / `/api/status` `sys.heap_internal_min` after changes.
+- Internal RAM: ~108 KB free while playing, minimum ~64 KB during TLS lookups (mbedTLS, cJSON, Wi-Fi/lwIP
+  buffers are in PSRAM; `malloc` ≥ 4 KB goes to PSRAM; Wi-Fi IRAM optimizations are off; the `cd_reader`,
+  `cd_writer` and `usb_lib` stacks are in PSRAM). Keep big buffers in PSRAM; check with `m` (heap and every
+  task's stack: location and unused bytes) after changes. A task stack may only be in PSRAM
+  (`xTaskCreateWithCaps`) if the task never writes to flash (NVS, LittleFS, OTA). `m`'s "largest" block
+  underreports: the 37.6 KB USB buffer was allocated fine while it showed 31.7 KB.
 - Metadata test discs: Xandria, *Ravenheart* (no CD-TEXT, Enhanced CD with a data track 13) matches MusicBrainz by
   exact disc ID and has a cover. Cache files are in `/data/meta/`; `M` (or `api/cmd?c=meta`) forces a new lookup.
 - The app is ~1.6 MB in a 2.5 MB OTA slot (`partitions.csv`). Don't move `nvs` (settings and Wi-Fi credentials live there).

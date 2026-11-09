@@ -190,8 +190,11 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 ### Configuration (`sdkconfig.defaults`)
 
 - `CONFIG_USB_HOST_HUBS_SUPPORTED=y`: a powered USB hub can be placed between the board and the drive.
-- 16 MB flash, octal PSRAM at 80 MHz. `malloc()` puts allocations of 16 KB or more in PSRAM. USB transfer
-  buffers are allocated by the USB library from internal DMA-capable RAM.
+- 16 MB flash, octal PSRAM at 80 MHz. `malloc()` puts allocations of 4 KB or more in PSRAM (IDF default:
+  16 KB). USB transfer buffers are allocated by the USB library from internal DMA-capable RAM.
+- Wi-Fi IRAM optimizations off (`CONFIG_ESP_WIFI_IRAM_OPT`, `CONFIG_ESP_WIFI_RX_IRAM_OPT`): 18 KB more internal
+  RAM; OTA throughput barely changed (124 vs 126 KiB/s).
+- `CONFIG_FREERTOS_USE_TRACE_FACILITY=y` for the `m` serial command (heap and task stacks).
 - Console on UART0, TX GPIO16 / RX GPIO21; no secondary console. The native USB port is the USB Host.
 - LVGL: built-in Montserrat 14 (default font) and 28 (time, digits only); the text labels use the generated
   fonts in `main/fonts`. clib malloc/string/sprintf, so large LVGL allocations can go to PSRAM.
@@ -322,6 +325,7 @@ Example: `curl -X POST "http://cdplayer.local/api/cmd?c=next"`.
 | `t` | Diagnostics: 1 kHz test tone for 3 s (pauses the player) |
 | `w` | Network/firmware info: Wi-Fi state, IP, RSSI, firmware version/ELF SHA/partition/OTA state, storage use, free heap, album info state (disc ID, source, cover) |
 | `M` | Look up album info / cover online again for the current disc (refreshes the cache) |
+| `m` | Memory: internal/DMA/PSRAM heap (free, minimum, largest block) and every task's stack (internal or PSRAM, bytes never used) |
 | `E` | Force the de-emphasis filter on all tracks on/off (to audition / test it; not saved) |
 | `P` | Clear the web UI admin password |
 | `W` | Set Wi-Fi credentials (prompts for SSID and password; Enter on an empty SSID clears them) |

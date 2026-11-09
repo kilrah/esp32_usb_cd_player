@@ -571,8 +571,11 @@ esp_err_t player_init(void)
     ESP_RETURN_ON_ERROR(esp_timer_create(&save_timer_args, &P.volume_save_timer), TAG, "timer");
 
     ESP_RETURN_ON_ERROR(audio_out_init(), TAG, "audio");
-    xTaskCreate(reader_task, "cd_reader", 4096, NULL, 6, &P.reader_task);
-    xTaskCreate(writer_task, "cd_writer", 4096, NULL, 7, &P.writer_task);
+    /* Stacks in PSRAM to save internal RAM: these tasks never write to flash (NVS saves run in the timer task) */
+    ESP_RETURN_ON_FALSE(xTaskCreateWithCaps(reader_task, "cd_reader", 4096, NULL, 6, &P.reader_task,
+                                            MALLOC_CAP_SPIRAM) == pdPASS, ESP_ERR_NO_MEM, TAG, "reader task");
+    ESP_RETURN_ON_FALSE(xTaskCreateWithCaps(writer_task, "cd_writer", 4096, NULL, 7, &P.writer_task,
+                                            MALLOC_CAP_SPIRAM) == pdPASS, ESP_ERR_NO_MEM, TAG, "writer task");
     ESP_LOGI(TAG, "Player ready (%d x %d KB read-ahead in PSRAM)", NUM_CHUNKS, CHUNK_BYTES / 1024);
     return ESP_OK;
 }

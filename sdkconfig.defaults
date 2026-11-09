@@ -56,3 +56,12 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
 # Sockets: the HTTP server takes up to max_open_sockets + 3 (ota.c caps it at 5). With the default of 10,
 # a browser holding keep-alive connections left none for the HTTPS lookups ("Failed to create socket").
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# uxTaskGetSystemState() for the 'm' serial command (task stacks: location and unused bytes)
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+# malloc() of 4 KB or more goes to PSRAM (default 16 KB): LVGL objects, CD-TEXT tables, httpd buffers.
+# Drivers that need DMA or ISR-safe memory request it with heap_caps_*; internal RAM is tight.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Wi-Fi code in flash instead of IRAM: ~15 KB more internal RAM, slightly lower Wi-Fi throughput
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n

@@ -22,6 +22,8 @@
 #include "esp_log.h"
 #include "driver/uart.h"
 #include "nvs_flash.h"
+#include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "usb/usb_host.h"
 #include "usb/atapi_host.h"
 #include "player.h"
@@ -129,7 +131,33 @@ static void print_help(void)
            "          <number><Enter>=play track, i=status, h=help\n"
            "          a=check I2S pins, t=1 kHz test tone (3 s)\n"
            "          w=network/firmware info, W=set Wi-Fi credentials, M=look up album info online again\n"
-           "          P=clear the web UI admin password, E=force de-emphasis on/off (test)\n");
+           "          P=clear the web UI admin password, E=force de-emphasis on/off (test)\n"
+           "          m=memory: heap and task stacks\n");
+}
+
+/** Heap summary and every task's stack: where it lives and how much of it was never used */
+static void print_memory(void)
+{
+    printf("HEAP internal free=%u min=%u largest=%u, dma free=%u largest=%u, psram free=%u\n",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    UBaseType_t cap = uxTaskGetNumberOfTasks() + 4;
+    TaskStatus_t *ts = heap_caps_malloc(cap * sizeof(*ts), MALLOC_CAP_SPIRAM);
+    if (!ts) {
+        return;
+    }
+    UBaseType_t n = uxTaskGetSystemState(ts, cap, NULL);
+    printf("TASKS %u (stack free = bytes never used)\n", (unsigned)n);
+    for (UBaseType_t i = 0; i < n; i++) {
+        printf("  %-16s prio %2u  stack %-8s free %5u\n", ts[i].pcTaskName, (unsigned)ts[i].uxCurrentPriority,
+               esp_ptr_external_ram(ts[i].pxStackBase) ? "PSRAM" : "internal",
+               (unsigned)ts[i].usStackHighWaterMark);
+    }
+    free(ts);
 }
 
 /**
@@ -234,6 +262,7 @@ static void console_task(void *arg)
         case 'i': break;
         case 'w': net_print_info(); meta_print_info(); number = -1; continue;
         case 'M': meta_refresh(); number = -1; continue;
+        case 'm': print_memory(); number = -1; continue;
         case 'E': player_force_deemphasis(!player_deemphasis_forced()); break;
         case 'P':
             printf("Admin password %s\n", auth_set_password("") == ESP_OK ? "cleared" : "NOT cleared (NVS error)");
@@ -473,7 +502,9 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi init failed: %s", esp_err_to_name(err));
     }
-    xTaskCreate(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL);
+    /* Stack in PSRAM: saves internal RAM. Only allowed for tasks that never write to flash (NVS, LittleFS, OTA):
+     * the cache is disabled during a flash write. */
+    xTaskCreateWithCaps(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL, MALLOC_CAP_SPIRAM);
     xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "Waiting for USB optical drive...");
