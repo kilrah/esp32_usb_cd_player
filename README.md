@@ -23,8 +23,8 @@ Video:
 ## Hardware notes:
 
 Most ESP boards with USB Host support need modification, e.g.
-- On the T-Display S3 where the USB port is normally used in "device" mode there is a diode that prevents an external supply from backfeeding into the hist computer. That diode needs to be removed and replaced with a jumper for the USB port to provide power to the drive (and 5V supplied from board pads).
-- On some Devkit-C-like boards with 2 ports the native USB port gets power from the USB-serial port, but through a fuse that causes too much voltage drop at the current a self-powered drive needs, so that also needs bypassing when using e-g- a laptop drive with no external power.
+- On the T-Display S3 where the USB port is normally used in "device" mode there is a diode that prevents an external supply from backfeeding into the host computer. That diode needs to be removed and replaced with a jumper for the USB port to provide power to the drive (and 5V supplied from board pads).
+- On some Devkit-C-like boards with 2 ports the native USB port gets power from the USB-serial port, but through a fuse that causes too much voltage drop at the current a self-powered drive needs, so that also needs bypassing when using e.g. a laptop drive with no external power.
 
 # Agent details below
 
