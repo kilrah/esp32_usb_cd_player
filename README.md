@@ -1,16 +1,20 @@
 # ESP USB CD Player
 
-An ESP-based standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP's USB Host port, plays them through an I2S DAC, shows track info on a display and provides a webui for interaction. Local button controls not implemented yet.
-USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/SATA desktop/laptop drive works behind an appropriate USB adapter.
+An ESP-based standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP's USB Host port, plays them through an I2S DAC, shows track info on a display and provides a webui for interaction. Hardware button controls not implemented yet.
+USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/SATA desktop/laptop drive should work behind an appropriate USB adapter.
 
-Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
+Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470-V2 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
 
-Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`.  
+Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`. Hostname can be changed in settings.
 
 CD-TEXT is displayed if available, and if internet is available disc metadata including cover will be retrieved from MusicBrainz / Cover Art Archive and cached locally in the LittleFS storage partition. 
-A 1.5MB audio ring buffer is used to cover the case where playback is paused, the drive goes to idle and takes long to spin back up when resuming (more likely than using it while running these days...)
+A 1.5MB/~8s audio ring buffer is used to cover the case where playback is paused, the drive goes to idle and takes long to spin back up when resuming (more likely than using it while running these days...)
 
 ![board](docs/img/board.jpg)
+
+![P4 board](docs/img/p4-board.jpg)
+
+![P4 Tracklist](docs/img/p4-tracklist.jpg)
 
 ![webui](docs/img/ui.jpg)
 
@@ -25,6 +29,7 @@ Video:
 Most ESP boards with USB Host support need modification, e.g.
 - On the T-Display S3 where the USB port is normally used in "device" mode there is a diode that prevents an external supply from backfeeding into the host computer. That diode needs to be removed and replaced with a jumper for the USB port to provide power to the drive (and 5V supplied from board pads).
 - On some Devkit-C-like boards with 2 ports the native USB port gets power from the USB-serial port, but through a fuse that causes too much voltage drop at the current a self-powered drive needs, so that also needs bypassing when using e.g. a laptop drive with no external power.
+- Some drives are more suited than others. Some will ignore the speed command and spin at max speed playing audio CDs and be noisy as a result. Some have dynamic balancing that cause a "slipping" sound. Laptop drives are probably preferable.
 
 # Agent details below
 
