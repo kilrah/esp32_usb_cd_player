@@ -3,7 +3,7 @@
 An ESP-based standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP's USB Host port, plays them through an I2S DAC, shows track info on a display and provides a webui for interaction. Local button controls not implemented yet.
 USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/SATA desktop/laptop drive works behind an appropriate USB adapter.
 
-Currently running on a LilyGO T-Display S3 with a PCM5102 DAC, but should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
+Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
 
 Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`.  
 
@@ -83,6 +83,51 @@ Earlier prototype: an ESP32-S3 N16R8 devkit (UART console on COM22, WS2812 statu
 host connector's VBUS line dropped too much voltage and browned out the drive during spin-up; it had to be bypassed.
 The WS2812 status LED code was removed when the display took over status indication.
 
+## Boards
+
+Each board has its own component in [components/](components) that provides the same `board.h`: display + LVGL
+port (+ touch), backlight (0-16), I2S pins and an audio codec hook. The board is chosen by the IDF target
+(component requirements can't depend on Kconfig), through a CMake preset ([CMakePresets.json](CMakePresets.json)):
+
+| Preset | Target | Board | Build dir / sdkconfig | Screen layout |
+|---|---|---|---|---|
+| `default` | esp32s3 | LilyGO T-Display S3 ([components/tdisplay_s3](components/tdisplay_s3)) | `build/`, `sdkconfig` | small (320x170) |
+| `p4` | esp32p4 | Guition JC1060P470 ([components/jc1060p470](components/jc1060p470)) | `build_p4/`, `sdkconfig.p4` | large (1024x600, touch) |
+
+The screen layout is chosen by the display size, not the board ([main/ui_layout.h](main/ui_layout.h)): a new board
+with a supported resolution only needs its board component. Settings shared by all boards are in
+`sdkconfig.defaults`, board settings in `sdkconfig.defaults.<target>` (applied automatically). Each target has
+its own component lock file (`dependencies.lock`, `dependencies.lock.esp32p4`). Everything in `components/` is
+seen by the component manager for every target, so a board component's target-specific dependencies need a
+`rules: - if: "target == ..."` entry.
+
+### Guition JC1060P470 (ESP32-P4)
+
+ESP32-P4 **rev 1.x** (v1.3, pre-production silicon; `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`), 16 MB flash, 32 MB PSRAM,
+7" 1024x600 MIPI-DSI panel (JD9165) with GT911 touch, ES8311 codec with an NS4150 speaker amplifier, ESP32-C6
+for Wi-Fi (ESP-Hosted over SDIO). Same board as the `p4_edge_enhancer` project; the panel init sequence comes from there.
+
+| Item | GPIO / detail |
+|---|---|
+| USB Host | The high-speed USB-OTG USB-C port (480 Mbit/s). The drive is plugged in here. Its VBUS comes from the board's 5 V rail (the other USB-C port or the battery booster): a bus-powered drive needs a strong supply there |
+| Console | The other USB-C port ("USB1", USB-Serial-JTAG; COM13 on this PC), also used for cable flashing. Serial commands work on it as on the T-Display |
+| Audio (default) | **PCM5102 module plugged 1:1 onto the VCC/GND/GPIO1-4 header**: VCC-VCC, GND-GND, GPIO1-LRCK, GPIO2-DIN, GPIO3-BCK, GPIO4-SCK (MCLK). Same module setup as on the T-Display (solder bridges). The speaker amplifier (GPIO11) is held off |
+| Audio (option) | On-board ES8311 (I2C address 0x18): MCLK 13, BCLK 12, WS 10, DOUT 9; amplifier enable GPIO11; speaker connector. **Mono**: left and right are mixed. Select with menuconfig *Board: Guition JC1060P470 > Audio output* (`CONFIG_JC1060_AUDIO_ES8311`); OTA is enough |
+| Display | MIPI-DSI 2 lanes, reset GPIO5, backlight PWM GPIO23 (LEDC, 16 levels, quadratic) |
+| I2C | SDA 7, SCL 8: GT911 touch, ES8311 |
+| Wi-Fi | ESP32-C6 on SDIO slot 1: CLK 18, CMD 19, D0-D3 14-17, C6 reset GPIO54 (esp_hosted defaults for the P4) |
+| Battery sense | GPIO53 (68k/100k divider; not used) |
+
+Hostname `cdplayer-p4` (so it can run next to the T-Display player). The first flash needs the cable:
+
+```powershell
+idf.py --preset p4 build
+idf.py --preset p4 -p COM13 flash monitor
+```
+
+The C6 must run ESP-Hosted slave firmware compatible with the `esp_hosted` 3.x host. If Wi-Fi doesn't come up,
+check the boot log for the hosted transport/version messages.
+
 ## Building and flashing
 
 Normally: **build and update over Wi-Fi** (see [Firmware update over Wi-Fi](#firmware-update-over-wi-fi-ota)).
@@ -95,7 +140,7 @@ doesn't exist). Activate the environment with the EIM profile script instead:
 
 ```powershell
 . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
-idf.py build
+idf.py build                 # T-Display S3 ("default" preset); idf.py --preset p4 build for the JC1060P470
 idf.py -p COM17 flash        # native USB in download mode, see below
 idf.py -p COM23 monitor      # logs + serial commands via the FTDI adapter
 ```
@@ -187,7 +232,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | ota_1 | app | 0x2A0000 | 2.5 MB | Firmware slot B |
 | storage | data/littlefs | 0x520000 | ~10.9 MB | LittleFS mounted at `/data` (`storage.c`). Formatted automatically on first mount. Meant for cached metadata from the internet (track lists, cover art) |
 
-### Configuration (`sdkconfig.defaults`)
+### Configuration (`sdkconfig.defaults`, `sdkconfig.defaults.esp32s3`)
 
 - `CONFIG_USB_HOST_HUBS_SUPPORTED=y`: a powered USB hub can be placed between the board and the drive.
 - 16 MB flash, octal PSRAM at 80 MHz. `malloc()` puts allocations of 4 KB or more in PSRAM (IDF default:
@@ -198,7 +243,8 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 - Console on UART0, TX GPIO16 / RX GPIO21; no secondary console. The native USB port is the USB Host.
 - LVGL: built-in Montserrat 14 (default font) and 28 (time, digits only); the text labels use the generated
   fonts in `main/fonts`. clib malloc/string/sprintf, so large LVGL allocations can go to PSRAM.
-- `CONFIG_IDF_TARGET="esp32s3"`: so `sdkconfig` can be regenerated from the defaults (delete it and build).
+- The target comes from the CMake preset (`sdkconfig.defaults.<target>` pins it too), so `sdkconfig` can be
+  regenerated from the defaults (delete it and build).
 - Custom partition table (`partitions.csv`), app rollback enabled in the bootloader.
 - Wi-Fi: `CONFIG_ESP_PHY_ENABLE_USB=y` keeps the USB PHY powered when the Wi-Fi PHY initializes. Without it the
   drive on the native USB port would stop working. Wi-Fi/lwIP buffers may be allocated in PSRAM.
@@ -214,8 +260,9 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/player.c](main/player.c) | Playback engine: a reader task fills 12 × 16-sector chunks (~2.5 s, 450 KB, `NUM_CHUNKS`) in PSRAM; a writer task streams them to I2S in 2-sector slices, applies the volume and tracks the position and the buffered sector count. A generation counter drops stale chunks on seek/stop/unload. Plays continuously across tracks, skips data tracks, stops at the lead-out. Reads are retried 3×; slow (>500 ms) and failed reads are logged |
 | [main/player.h](main/player.h) | Player API, status snapshot, volume cap (persisted in NVS by `player.c`) (`PLAYER_VOLUME_MAX`, `PLAYER_VOLUME_STEP`, `player_volume_display()`) |
 | [main/audio_out.c](main/audio_out.c) | I2S0 master, 44.1 kHz, 16-bit stereo, Philips format, MCLK = 256·fs. DMA auto-clear outputs silence on pause or underrun. Pin check and test-tone diagnostics |
-| [main/fonts](main/fonts) | Text fonts for the display (Montserrat 14/20 px with Latin-1, Latin Extended-A, punctuation and the LVGL symbols), generated by [tools/font_conv.ps1](tools/font_conv.ps1) |
-| [main/ui.c](main/ui.c) | LVGL screen, refreshed every 200 ms from a `player_get_status()` snapshot (runs in the LVGL task) |
+| [main/fonts](main/fonts) | Text fonts for the display (Montserrat 14/20/28/40 px with Latin-1, Latin Extended-A, punctuation and the LVGL symbols), generated by [tools/font_conv.ps1](tools/font_conv.ps1). Fonts a layout doesn't use are dropped by the linker |
+| [main/ui.c](main/ui.c) | Shared screen logic: display init, 200 ms refresh from a `player_get_status()` snapshot (runs in the LVGL task), backlight policy, cover image, text helpers |
+| [main/ui_layout_small.c](main/ui_layout_small.c), [main/ui_layout_large.c](main/ui_layout_large.c) | Screen layouts by display size ([main/ui_layout.h](main/ui_layout.h)): 320x170 class, and 1024x600 class with touch controls |
 | [main/net.c](main/net.c) | Wi-Fi station: credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS hostname `cdplayer` (`CONFIG_CD_HOSTNAME`), starts the HTTP server on the first IP address |
 | [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
 | [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
@@ -225,6 +272,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/discid.c](main/discid.c) | MusicBrainz disc ID (SHA-1 + base64 over the TOC; own SHA-1, since mbedTLS 4 doesn't export it) |
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
+| [components/jc1060p470](components/jc1060p470) | JC1060P470: MIPI-DSI (JD9165) + LVGL port, GT911 touch, PWM backlight, ES8311 setup; pulls in ESP-Hosted / esp_wifi_remote for Wi-Fi |
 
 On disc load and after each spin-up the drive is set to 4x (`SET CD SPEED`) for less noise; the log line `Read speed ...` shows the result and the speed the drive reports. CD audio needs 1x. `SET STREAMING` (the MMC-3 alternative) is implemented but off by default: the TSSTcorp SH-S182M took it as "full speed". For trying other drives: `api/cmd?c=speed&v=<kB/s, 176 = 1x, 0 = max>&m=<1 SET CD SPEED, 2 SET STREAMING, 3 both>`, applied at once, not saved.
 A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up.
@@ -245,7 +293,8 @@ When a disc is loaded ([main/meta.c](main/meta.c)):
    The result is cached.
 4. The player shows the data wherever CD-TEXT has nothing (CD-TEXT always wins, so for CD-TEXT discs this
    mostly adds the cover). The cover is decoded
-   (`espressif/esp_jpeg`, 1/2 scale), center-cropped and area-averaged to 72×72 for the screen.
+   (`espressif/esp_jpeg`, 1/2 scale), center-cropped and area-averaged to the layout's cover size (72×72 small,
+   300×300 large; the large layout downloads `front-500`).
 
 Failures are retried after 5, 15, 60 and 180 s, then given up until the disc is reloaded. The reason of the last
 failure is shown by `w` and in the web UI (Album info). A disc unknown to MusicBrainz is remembered until reboot, so it
@@ -275,7 +324,7 @@ Notes:
 
 ### Controls
 
-The player is controlled through the web UI or serial commands. The onboard buttons are not used; dedicated
+The player is controlled through the web UI, serial commands, or the touch screen (JC1060P470). The T-Display's onboard buttons are not used; dedicated
 buttons will be added later. An earlier, uncommitted version used the two onboard buttons through the
 `espressif/button` component (click / double click / hold events), which worked well for this.
 
@@ -388,6 +437,26 @@ message, firmware update or setup AP; saving the settings counts too. The backli
 driver with 16 levels, set by pulses on GPIO38 (`tdisplay_s3_set_brightness()`).
 
 The cover is only shown when there is one (album info section); the album and title lines then end left of it. The play state symbol sits at the right end of the time line. A Wi-Fi symbol after the buffer value means connected. During a firmware update, the title line shows the progress.
+
+**Large layout** (1024x600, touch; [main/ui_layout_large.c](main/ui_layout_large.c)):
+
+```
++------------------------------------------------------------------------+
+| +---------+  Artist                                             [list] |
+| |  cover  |  Album                                                     |
+| | 300x300 |  Track title (40 px, scrolls)                              |
+| |         |  Track 3 / 11                                              |
+| +---------+  01:23 / 04:17                                             |
+| [===========o------------------------------------------------------]   |  drag to seek (on release)
+| Buffer 92%  (wifi) (warn)                                   Disc 45:12 |
+| [eject] [prev] [ play/pause ] [stop] [next]              70 %         |
+|                                                   [=======o-------]    |
++------------------------------------------------------------------------+
+```
+
+[list] opens the track list over the whole screen (current track highlighted); tapping a track plays it.
+The volume slider applies while dragging; the percentage above it follows. Buttons that can't act are greyed out. A touch counts as activity for the
+backlight; while it's dimmed or off, the first touch only wakes the screen and doesn't press anything.
 
 When there is no disc, the title line shows the drive state: Waiting for drive, Drive found..., Loading...,
 No disc, Tray open, Reading disc..., Cannot read disc, Drive error.

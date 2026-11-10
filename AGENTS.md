@@ -10,6 +10,13 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
 
 - **Build environment:** ESP-IDF v6.1 via EIM. In PowerShell, run `. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1`
   first. `C:\esp\v6.1\esp-idf\export.ps1` is broken on this machine.
+- **Boards / presets:** `idf.py build` = T-Display S3 (`default` preset: `build/`, `sdkconfig`), `idf.py --preset p4 build`
+  = Guition JC1060P470 (ESP32-P4: `build_p4/`, `sdkconfig.p4`, `dependencies.lock.esp32p4`). Board code lives in
+  `components/<board>` behind a common `board.h`; screen layouts are picked by resolution (`main/ui_layout.h`), not board.
+  Common settings in `sdkconfig.defaults`, board ones in `sdkconfig.defaults.<target>`. P4 board details (console on
+  its USB-Serial-JTAG port, COM13; an RTS pulse didn't reset it, `api/reboot` does and the port survives the reboot; PCM5102 on GPIO1-4 by default, on-board mono ES8311 as a
+  Kconfig option; Wi-Fi via the C6; hostname `cdplayer-p4`) are in the README. Its DSI ISR must stay cache-safe (screen
+  flashed during flash writes), which needs the IRAM flush callback in `jc1060p470.c`.
 - **Board: LilyGO T-Display S3** (non-touch). The optical drive is on the native USB port (USB Host). The PCM5102 is on
   GPIO43/44/18/17. The pinout is in the README; check it for conflicts before assigning new pins (the LCD uses many).
   - **Console:** external FTDI on **COM23** (board TX = GPIO16, RX = GPIO21). The FTDI has no DTR/RTS wiring, so the agent

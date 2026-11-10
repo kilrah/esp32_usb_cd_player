@@ -1,11 +1,12 @@
 /*
- * USB CD player (LilyGO T-Display S3 + USB optical drive + PCM5102 I2S DAC)
+ * USB CD player: USB optical drive + I2S audio + LVGL display. Boards: LilyGO T-Display S3 (PCM5102 DAC),
+ * Guition JC1060P470 (ESP32-P4, 7" touch screen, on-board ES8311). Board specifics live in components/<board>.
  *
  * - Detects an optical drive on the USB Host port, waits for an audio CD
  * - Reads TOC and CD-TEXT, starts playing (autoplay setting), streams CD-DA to the I2S DAC (player.c)
  * - Shows track info / transport state on the display (ui.c)
- * - Controlled via serial commands on the console UART (type 'h' for help);
- *   physical buttons will be added later
+ * - Controlled via serial commands on the console (type 'h' for help), the web UI, and the touch screen
+ *   where there is one
  * - Wi-Fi with firmware update over HTTP (net.c, ota.c, tools/ota.py); LittleFS at /data (storage.c)
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
@@ -21,6 +22,10 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "driver/uart.h"
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
+#endif
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
@@ -160,19 +165,45 @@ static void print_memory(void)
     free(ts);
 }
 
+/* Console input: the console UART, or the USB-Serial-JTAG port (ESP32-P4 board) */
+static void console_input_init(void)
+{
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&cfg));
+    usb_serial_jtag_vfs_use_driver(); /* printf() through the driver too, so output and input don't collide */
+#else
+    const uart_port_t port = CONFIG_ESP_CONSOLE_UART_NUM;
+    ESP_ERROR_CHECK(uart_driver_install(port, 256, 0, 0, NULL, 0));
+    uart_set_pin(port, CONFIG_ESP_CONSOLE_UART_TX_GPIO, CONFIG_ESP_CONSOLE_UART_RX_GPIO,
+                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+#endif
+}
+
+/** Blocking read of one character */
+static uint8_t console_getc(void)
+{
+    uint8_t ch;
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    while (usb_serial_jtag_read_bytes(&ch, 1, portMAX_DELAY) != 1) {
+    }
+#else
+    while (uart_read_bytes(CONFIG_ESP_CONSOLE_UART_NUM, &ch, 1, portMAX_DELAY) != 1) {
+    }
+#endif
+    return ch;
+}
+
 /**
  * Read a line with echo (Enter terminates; a LF right after CR is skipped, so CRLF terminals work).
  * @param mask echo '*' instead of the characters
  */
-static void read_line(uart_port_t port, char *buf, size_t size, bool mask)
+static void read_line(char *buf, size_t size, bool mask)
 {
     static bool last_cr;
     size_t len = 0;
     while (true) {
-        uint8_t ch;
-        if (uart_read_bytes(port, &ch, 1, portMAX_DELAY) != 1) {
-            continue;
-        }
+        uint8_t ch = console_getc();
         if (ch == '\n' && last_cr) {
             last_cr = false;
             continue;
@@ -194,17 +225,17 @@ static void read_line(uart_port_t port, char *buf, size_t size, bool mask)
     printf("\n");
 }
 
-static void configure_wifi(uart_port_t port)
+static void configure_wifi(void)
 {
     char ssid[33], pass[65];
     printf("Wi-Fi SSID (empty = clear): ");
     fflush(stdout);
-    read_line(port, ssid, sizeof(ssid), false);
+    read_line(ssid, sizeof(ssid), false);
     pass[0] = '\0';
     if (ssid[0]) {
         printf("Password (empty = open network): ");
         fflush(stdout);
-        read_line(port, pass, sizeof(pass), true);
+        read_line(pass, sizeof(pass), true);
     }
     esp_err_t err = net_set_credentials(ssid, pass);
     if (err != ESP_OK) {
@@ -212,21 +243,15 @@ static void configure_wifi(uart_port_t port)
     }
 }
 
-/** Simple command interface on the console UART, so the player can be driven without buttons */
+/** Simple command interface on the console, so the player can be driven without buttons */
 static void console_task(void *arg)
 {
-    const uart_port_t port = CONFIG_ESP_CONSOLE_UART_NUM;
-    ESP_ERROR_CHECK(uart_driver_install(port, 256, 0, 0, NULL, 0));
-    uart_set_pin(port, CONFIG_ESP_CONSOLE_UART_TX_GPIO, CONFIG_ESP_CONSOLE_UART_RX_GPIO,
-                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    console_input_init();
     print_help();
 
     int number = -1;
     while (true) {
-        uint8_t ch;
-        if (uart_read_bytes(port, &ch, 1, portMAX_DELAY) != 1) {
-            continue;
-        }
+        uint8_t ch = console_getc();
         if (isdigit(ch)) {
             number = (number < 0 ? 0 : number * 10) + (ch - '0');
             continue;
@@ -268,7 +293,7 @@ static void console_task(void *arg)
             printf("Admin password %s\n", auth_set_password("") == ESP_OK ? "cleared" : "NOT cleared (NVS error)");
             number = -1;
             continue;
-        case 'W': configure_wifi(port); number = -1; continue;
+        case 'W': configure_wifi(); number = -1; continue;
         case 'h': print_help(); break;
         default:
             number = -1; /* unknown character: discard a partially typed track number */
@@ -567,7 +592,7 @@ void app_main(void)
         /* A hung drive: the bridge takes commands but never answers, BOT reset recovery doesn't help, and
          * neither does a USB bus reset (tested: root port power cycle / ESP reboot re-enumerate the bridge,
          * the drive behind it stays hung). Only cutting the drive's power helps; VBUS isn't switchable on
-         * the T-Display S3, so tell the user. */
+         * the boards so far, so tell the user. */
         D.transport_failures = state == ESP_ERR_ATAPI_TRANSPORT ? D.transport_failures + 1 : 0;
         if (D.transport_failures == TRANSPORT_FAILURES_HUNG) {
             ESP_LOGE(TAG, "Drive not responding (%d failed polls); it needs a power cycle", D.transport_failures);

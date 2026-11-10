@@ -17,8 +17,9 @@
 #include "esp_err.h"
 #include "usb/atapi_host.h"
 #include "discid.h"
+#include "ui_layout.h"
 
-#define META_COVER_SIZE 72  /* on-screen cover: META_COVER_SIZE² pixels, RGB565 */
+#define META_COVER_SIZE UI_COVER_SIZE  /* on-screen cover: META_COVER_SIZE² pixels, RGB565 (size from the layout) */
 #define META_CACHE_DIR  "/data/meta" /* <discid>.json + <discid>.jpg */
 
 typedef enum {

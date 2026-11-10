@@ -1,5 +1,5 @@
 /*
- * I2S output to a PCM5102 DAC (44.1 kHz, 16-bit stereo)
+ * I2S audio output (44.1 kHz, 16-bit stereo), see audio_out.h
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -12,6 +12,12 @@
 #include "esp_rom_sys.h"
 #include "driver/i2s_std.h"
 #include "driver/pulse_cnt.h"
+#include "board.h"
+
+#define AUDIO_PIN_MCLK BOARD_I2S_MCLK
+#define AUDIO_PIN_BCLK BOARD_I2S_BCLK
+#define AUDIO_PIN_WS   BOARD_I2S_WS
+#define AUDIO_PIN_DOUT BOARD_I2S_DOUT
 
 static const char *TAG = "audio_out";
 static i2s_chan_handle_t s_tx;
@@ -40,14 +46,44 @@ esp_err_t audio_out_init(void)
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_tx), TAG, "enable");
     ESP_LOGI(TAG, "I2S out: %d Hz, 16-bit stereo, MCLK %d BCK %d WS %d DOUT %d", AUDIO_SAMPLE_RATE,
              AUDIO_PIN_MCLK, AUDIO_PIN_BCLK, AUDIO_PIN_WS, AUDIO_PIN_DOUT);
+    /* Codec / amplifier setup needs MCLK running. Not fatal: the player (and the I2S pins) keep working. */
+    esp_err_t err = board_audio_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio codec init failed: %s", esp_err_to_name(err));
+    }
     return ESP_OK;
 }
 
+#if BOARD_AUDIO_MONO
+/* One DAC (it plays the left slot): mix both channels into both slots, in chunks */
+esp_err_t audio_out_write(const void *data, size_t len, TickType_t timeout)
+{
+    static int16_t mix[1024]; /* only the player task (or the test tone, never at the same time) writes */
+    const int16_t *in = data;
+    size_t frames = len / 4;
+    while (frames) {
+        size_t n = frames < sizeof(mix) / 4 ? frames : sizeof(mix) / 4;
+        for (size_t i = 0; i < n; i++) {
+            int16_t m = (int16_t)(((int32_t)in[2 * i] + in[2 * i + 1]) / 2);
+            mix[2 * i] = mix[2 * i + 1] = m;
+        }
+        size_t written = 0;
+        esp_err_t err = i2s_channel_write(s_tx, mix, n * 4, &written, pdTICKS_TO_MS(timeout));
+        if (err != ESP_OK) {
+            return err;
+        }
+        in += 2 * n;
+        frames -= n;
+    }
+    return ESP_OK;
+}
+#else
 esp_err_t audio_out_write(const void *data, size_t len, TickType_t timeout)
 {
     size_t written = 0;
     return i2s_channel_write(s_tx, data, len, &written, pdTICKS_TO_MS(timeout));
 }
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Diagnostics                                                              */

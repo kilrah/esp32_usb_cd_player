@@ -1,5 +1,6 @@
 /*
- * I2S output to a PCM5102 DAC (44.1 kHz, 16-bit stereo)
+ * I2S audio output (44.1 kHz, 16-bit stereo): PCM5102 DAC on the T-Display S3, on-board ES8311 on the JC1060P470.
+ * Pins and codec setup come from the board component (board.h).
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -9,12 +10,6 @@
 #include <stddef.h>
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
-
-/* PCM5102 wiring on the T-Display S3 */
-#define AUDIO_PIN_MCLK   17  /* PCM5102 SCK */
-#define AUDIO_PIN_BCLK   18  /* PCM5102 BCK */
-#define AUDIO_PIN_WS     43  /* PCM5102 LCK */
-#define AUDIO_PIN_DOUT   44  /* PCM5102 DIN */
 
 #define AUDIO_SAMPLE_RATE 44100
 

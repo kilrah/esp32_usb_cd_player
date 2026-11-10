@@ -1,18 +1,8 @@
 /*
- * CD player screen (LVGL, 320x170 landscape)
+ * CD player screen: shared part (display setup, refresh timer, backlight policy, cover image, text helpers)
  *
- *  +------------------------------------------------+
- *  | Artist - Album                     +--------+  |
- *  | Track title                   (20) | cover  |  |
- *  | Track 3 / 11                       | 72x72  |  |
- *  |                                    +--------+  |
- *  | 01:23                  / 04:17              > |
- *  | [=============-------------------------------] |
- *  | Vol 100%   Buf  92%   (wifi) (warn)     34:56 |
- *  +------------------------------------------------+
- *
- * The cover (meta.c: cache / Cover Art Archive) is only shown when there is one; the album and title
- * lines then end left of it. The text fonts cover Latin-1 and Latin Extended-A; other characters show as '?'.
+ * The widgets are created and updated by the layout for the display size (ui_layout.h). The text fonts cover
+ * Latin-1 and Latin Extended-A; other characters show as '?'.
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -26,26 +16,15 @@
 #include "esp_timer.h"
 #include "nvs.h"
 #include "esp_lvgl_port.h"
-#include "tdisplay_s3.h"
+#include "board.h"
 #include "player.h"
 #include "net.h"
 #include "ota.h"
 #include "meta.h"
 #include "ui.h"
+#include "ui_priv.h"
 
 static const char *TAG = "ui";
-
-/* Montserrat with Latin-1 + Latin Extended-A + LVGL symbols (main/fonts, see font_conv.ps1) */
-LV_FONT_DECLARE(font_text_14);
-LV_FONT_DECLARE(font_text_20);
-
-#define COL_X        10
-#define COL_W        (TDS3_LCD_H_RES - 2 * COL_X)
-#define COVER_X      (TDS3_LCD_H_RES - COL_X - META_COVER_SIZE)
-#define COVER_Y      6
-#define TEXT_W_COVER (COVER_X - 8 - COL_X)   /* album/title width when the cover is shown */
-#define COLOR_DIM    lv_color_hex(0x8a8a8a)
-#define COLOR_ACCENT lv_color_hex(0x37b4ff)
 
 /* Backlight settings: NVS namespace "display", key "backlight" (blob, versioned) */
 #define BL_NVS_NAMESPACE "display"
@@ -60,17 +39,18 @@ typedef struct {
 
 static portMUX_TYPE s_bl_lock = portMUX_INITIALIZER_UNLOCKED;
 static ui_backlight_cfg_t s_bl = {
-    .mode = UI_DIM_IDLE, .on_level = TDS3_BRIGHTNESS_MAX, .dim_level = 4, .dim_delay_s = 30, .off_delay_s = 600,
+    .mode = UI_DIM_IDLE, .on_level = BOARD_BRIGHTNESS_MAX, .dim_level = 4, .dim_delay_s = 30, .off_delay_s = 600,
 };
 static volatile bool s_bl_wake; /* settings changed: treat as activity */
 
-static lv_obj_t *s_album, *s_title, *s_track, *s_state, *s_time, *s_total, *s_bar, *s_disc_len;
-static lv_obj_t *s_vol, *s_buf, *s_wifi, *s_warn; /* bottom line: fixed slots, values right-aligned */
-static lv_obj_t *s_cover, *s_spinner;
-static bool s_has_cover;
 static uint16_t *s_cover_px;                     /* RGB565, PSRAM; only touched in the LVGL task */
 static lv_image_dsc_t s_cover_dsc;
 static uint32_t s_cover_gen = UINT32_MAX;
+static bool s_has_cover;
+
+#if BOARD_HAS_TOUCH
+static volatile bool s_touched; /* a touch counts as activity (wakes the backlight) */
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* UTF-8 filter for the display fonts                                       */
@@ -149,8 +129,10 @@ static void to_display(char *dst, size_t size, const char *src)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Helpers for the layouts                                                  */
+/* ------------------------------------------------------------------------ */
 
-static void set_text(lv_obj_t *lbl, const char *text)
+void ui_set_text(lv_obj_t *lbl, const char *text)
 {
     /* Avoid resetting scroll animations when nothing changed */
     if (strcmp(lv_label_get_text(lbl), text) != 0) {
@@ -158,20 +140,20 @@ static void set_text(lv_obj_t *lbl, const char *text)
     }
 }
 
-static void set_text_utf8(lv_obj_t *lbl, const char *utf8)
+void ui_set_text_utf8(lv_obj_t *lbl, const char *utf8)
 {
     char buf[2 * PLAYER_TEXT_LEN + 8];
     to_display(buf, sizeof(buf), utf8);
-    set_text(lbl, buf);
+    ui_set_text(lbl, buf);
 }
 
-static void fmt_time(char *buf, size_t len, uint32_t sectors)
+void ui_fmt_time(char *buf, size_t len, uint32_t sectors)
 {
     uint32_t s = sectors / ATAPI_CD_FRAMES_PER_SECOND;
     snprintf(buf, len, "%02"PRIu32":%02"PRIu32, s / 60, s % 60);
 }
 
-static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, int x, int y, int w)
+lv_obj_t *ui_make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, int x, int y, int w)
 {
     lv_obj_t *l = lv_label_create(parent);
     lv_obj_set_style_text_font(l, font, 0);
@@ -184,7 +166,7 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t 
     return l;
 }
 
-static void set_hidden(lv_obj_t *obj, bool hidden)
+void ui_set_hidden(lv_obj_t *obj, bool hidden)
 {
     if (hidden != lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
         if (hidden) {
@@ -195,35 +177,26 @@ static void set_hidden(lv_obj_t *obj, bool hidden)
     }
 }
 
-/** Cover image, and a spinner in its place (on top of an existing cover) while a lookup runs */
-static void update_cover(void)
+bool ui_cover_poll(bool *has_cover)
 {
-    if (s_cover_px && meta_get_cover(&s_cover_gen, s_cover_px, &s_has_cover) && s_has_cover) {
-        /* Same descriptor, new pixels: raw RGB565 is drawn from memory (no image cache), so a redraw is enough */
-        lv_image_set_src(s_cover, &s_cover_dsc);
-        lv_obj_invalidate(s_cover);
-    }
-    meta_info_t mi;
-    meta_get_info(&mi);
-    bool looking_up = mi.state == META_LOOKING_UP;
-    set_hidden(s_cover, !s_has_cover);
-    set_hidden(s_spinner, !looking_up);
-
-    int32_t w = (s_has_cover || looking_up) ? TEXT_W_COVER : COL_W;
-    if (lv_obj_get_width(s_album) != w) {
-        lv_obj_set_width(s_album, w);
-        lv_obj_set_width(s_title, w);
-    }
+    bool changed = s_cover_px && meta_get_cover(&s_cover_gen, s_cover_px, &s_has_cover);
+    *has_cover = s_has_cover;
+    return changed;
 }
 
-/**
- * Activity = anything the user would notice or cause: play state, track, volume, disc, status message,
- * firmware update, setup AP. Playback position changes don't count.
- */
+const lv_image_dsc_t *ui_cover_image(void)
+{
+    return &s_cover_dsc;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Backlight                                                                */
+/* ------------------------------------------------------------------------ */
+
 static void clamp_backlight(ui_backlight_cfg_t *c)
 {
     c->mode = c->mode > UI_DIM_ALWAYS ? UI_DIM_IDLE : c->mode;
-    c->on_level = c->on_level < 1 ? 1 : c->on_level > TDS3_BRIGHTNESS_MAX ? TDS3_BRIGHTNESS_MAX : c->on_level;
+    c->on_level = c->on_level < 1 ? 1 : c->on_level > BOARD_BRIGHTNESS_MAX ? BOARD_BRIGHTNESS_MAX : c->on_level;
     c->dim_level = c->dim_level < 0 ? 0 : c->dim_level > c->on_level ? c->on_level : c->dim_level;
     c->dim_delay_s = c->dim_delay_s < 5 ? 5 : c->dim_delay_s > 3600 ? 3600 : c->dim_delay_s;
     c->off_delay_s = c->off_delay_s < 0 ? 0 : c->off_delay_s > 24 * 3600 ? 24 * 3600 : c->off_delay_s;
@@ -283,6 +256,10 @@ esp_err_t ui_set_backlight(const ui_backlight_cfg_t *cfg)
     return err;
 }
 
+/**
+ * Activity = anything the user would notice or cause: play state, track, volume, disc, status message,
+ * firmware update, setup AP, touching the screen. Playback position changes don't count.
+ */
 static void update_backlight(const player_status_t *st)
 {
     static uint32_t last_sig;
@@ -296,7 +273,12 @@ static void update_backlight(const player_status_t *st)
     }
     sig ^= st->disc_len * 2654435761u;
     int64_t now = esp_timer_get_time() / 1000000;
-    if (sig != last_sig || last_activity == 0 || s_bl_wake) {
+    bool touched = false;
+#if BOARD_HAS_TOUCH
+    touched = s_touched;
+    s_touched = false;
+#endif
+    if (sig != last_sig || last_activity == 0 || s_bl_wake || touched) {
         s_bl_wake = false;
         last_sig = sig;
         last_activity = now;
@@ -312,86 +294,42 @@ static void update_backlight(const player_status_t *st)
     } else if (dim && quiet >= c.dim_delay_s) {
         level = c.dim_level;
     }
-    if (level != tdisplay_s3_get_brightness()) {
-        tdisplay_s3_set_brightness(level);
+    if (level != board_get_brightness()) {
+        board_set_brightness(level);
     }
 }
+
+#if BOARD_HAS_TOUCH
+/**
+ * Any press on the screen brightens the backlight. While it is dimmed, the press also acts normally (the screen
+ * is readable). While it is off, the first touch only wakes it up and doesn't reach the widget: pressing
+ * "stop" on a dark screen shouldn't stop the music.
+ */
+static void touch_cb(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_event_get_target(e); /* indev events are sent before the widget gets the press */
+    s_touched = true;
+    ui_backlight_cfg_t c;
+    ui_get_backlight(&c);
+    int level = board_get_brightness();
+    if (level < c.on_level) {
+        board_set_brightness(c.on_level);
+        if (level == 0) {
+            lv_indev_reset(indev, NULL);      /* the press doesn't reach the widget */
+            lv_indev_wait_release(indev);     /* nor does the rest of this touch */
+        }
+    }
+}
+#endif
+
+/* ------------------------------------------------------------------------ */
 
 static void update_cb(lv_timer_t *t)
 {
     player_status_t st;
-    char buf[2 * PLAYER_TEXT_LEN + 8];
     player_get_status(&st);
     update_backlight(&st);
-    update_cover();
-
-    if (st.state == PLAYER_NO_DISC) {
-        set_text(s_album, "");
-        set_text_utf8(s_title, st.message);
-        set_text(s_track, "");
-        set_text(s_state, "");
-        set_text(s_time, "--:--");
-        set_text(s_total, "");
-        set_text(s_disc_len, "");
-        lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
-    } else {
-        if (st.artist[0] && st.album[0]) {
-            snprintf(buf, sizeof(buf), "%s - %s", st.artist, st.album);
-        } else {
-            snprintf(buf, sizeof(buf), "%s", st.artist[0] ? st.artist : st.album[0] ? st.album : "Audio CD");
-        }
-        set_text_utf8(s_album, buf);
-
-        if (st.performer[0]) {
-            snprintf(buf, sizeof(buf), "%s - %s", st.title, st.performer);
-            set_text_utf8(s_title, buf);
-        } else {
-            set_text_utf8(s_title, st.title);
-        }
-
-        snprintf(buf, sizeof(buf), "Track %d / %d%s", st.track, st.num_tracks, st.deemphasis ? "   De-emph." : "");
-        set_text(s_track, buf);
-        set_text(s_state, st.state == PLAYER_PLAYING ? LV_SYMBOL_PLAY :
-                 st.state == PLAYER_PAUSED ? LV_SYMBOL_PAUSE : LV_SYMBOL_STOP);
-
-        fmt_time(buf, sizeof(buf), st.track_pos);
-        set_text(s_time, buf);
-        buf[0] = '/';
-        buf[1] = ' ';
-        fmt_time(buf + 2, sizeof(buf) - 2, st.track_len);
-        set_text(s_total, buf);
-        fmt_time(buf, sizeof(buf), st.disc_len);
-        set_text(s_disc_len, buf);
-        lv_bar_set_value(s_bar, st.track_len ? (int32_t)((uint64_t)st.track_pos * 1000 / st.track_len) : 0,
-                         LV_ANIM_OFF);
-    }
-
-    int ota = ota_progress();
-    if (ota >= 0) {
-        snprintf(buf, sizeof(buf), "FW update: %d%%", ota);
-        set_text(s_title, buf);
-    }
-
-    net_status_t net;
-    net_get_status(&net);
-    if (net.ap_active && !net.connected && st.state != PLAYER_PLAYING && st.state != PLAYER_PAUSED) {
-        /* Setup access point: how to reach the web UI. Network + password and the address alternate every
-         * 3 s: together they don't fit the line (220 px next to the cover) and would scroll.
-         * Only when idle (stopped or no disc); during playback the line shows the album. */
-        if ((esp_timer_get_time() / 3000000) % 2 == 0) {
-            const char *pw = net_ap_password();
-            snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s / %s", net.ap_ssid, pw[0] ? pw : "open");
-        } else {
-            snprintf(buf, sizeof(buf), "Setup: http://" NET_AP_IP_STR);
-        }
-        set_text(s_album, buf);
-    }
-    snprintf(buf, sizeof(buf), "%d%%", player_volume_display(st.volume));
-    set_text(s_vol, buf);
-    snprintf(buf, sizeof(buf), "%d%%", st.buffer_pct);
-    set_text(s_buf, buf);
-    set_text(s_wifi, net.connected ? LV_SYMBOL_WIFI : "");
-    set_text(s_warn, st.read_errors ? LV_SYMBOL_WARNING : "");
+    ui_layout_update(&st);
 }
 
 static void build_screen(void)
@@ -401,76 +339,33 @@ static void build_screen(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Cover art, top right (hidden until there is one) */
-    s_cover_px = heap_caps_calloc(1, META_COVER_SIZE * META_COVER_SIZE * 2, MALLOC_CAP_SPIRAM);
+    s_cover_px = heap_caps_calloc(1, UI_COVER_SIZE * UI_COVER_SIZE * 2, MALLOC_CAP_SPIRAM);
     s_cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
     s_cover_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    s_cover_dsc.header.w = META_COVER_SIZE;
-    s_cover_dsc.header.h = META_COVER_SIZE;
-    s_cover_dsc.header.stride = META_COVER_SIZE * 2;
-    s_cover_dsc.data_size = META_COVER_SIZE * META_COVER_SIZE * 2;
+    s_cover_dsc.header.w = UI_COVER_SIZE;
+    s_cover_dsc.header.h = UI_COVER_SIZE;
+    s_cover_dsc.header.stride = UI_COVER_SIZE * 2;
+    s_cover_dsc.data_size = UI_COVER_SIZE * UI_COVER_SIZE * 2;
     s_cover_dsc.data = (const uint8_t *)s_cover_px;
-    s_cover = lv_image_create(scr);
-    lv_obj_set_pos(s_cover, COVER_X, COVER_Y);
-    lv_obj_set_size(s_cover, META_COVER_SIZE, META_COVER_SIZE);
-    lv_obj_add_flag(s_cover, LV_OBJ_FLAG_HIDDEN);
 
-    /* Spinner in the cover area while album info is being looked up online */
-    const int spin = 36;
-    s_spinner = lv_spinner_create(scr);
-    lv_spinner_set_anim_params(s_spinner, 1000, 240);
-    lv_obj_set_size(s_spinner, spin, spin);
-    lv_obj_set_pos(s_spinner, COVER_X + (META_COVER_SIZE - spin) / 2, COVER_Y + (META_COVER_SIZE - spin) / 2);
-    lv_obj_set_style_arc_width(s_spinner, 4, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_spinner, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_spinner, lv_color_hex(0x303030), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_spinner, COLOR_ACCENT, LV_PART_INDICATOR);
-    lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
-
-    /* Track info */
-    s_album = make_label(scr, &font_text_14, COLOR_DIM, COL_X, 6, COL_W);
-    lv_label_set_long_mode(s_album, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    s_title = make_label(scr, &font_text_20, lv_color_white(), COL_X, 26, COL_W);
-    lv_label_set_long_mode(s_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    s_track = make_label(scr, &font_text_14, COLOR_ACCENT, COL_X, 58, 0);
-
-    /* Time line: position, "/ length", play state at the right end */
-    s_time = make_label(scr, &lv_font_montserrat_28, lv_color_white(), COL_X, 82, 0);
-    s_total = make_label(scr, &font_text_14, COLOR_DIM, COL_X + 92, 94, 0);
-    s_state = make_label(scr, &font_text_20, COLOR_ACCENT, 0, 90, 0);
-    lv_obj_align(s_state, LV_ALIGN_TOP_RIGHT, -COL_X, 90);
-
-    s_bar = lv_bar_create(scr);
-    lv_obj_set_size(s_bar, COL_W, 8);
-    lv_obj_set_pos(s_bar, COL_X, 124);
-    lv_bar_set_range(s_bar, 0, 1000);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x303030), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_bar, COLOR_ACCENT, LV_PART_INDICATOR);
-
-    /* Bottom line: "Vol 100%   Buf  92%   (wifi) (warning)". Values sit in fixed-width, right-aligned
-     * boxes so nothing moves when their digit count changes. */
-    make_label(scr, &font_text_14, COLOR_DIM, COL_X, 144, 0);
-    lv_label_set_text(lv_obj_get_child(scr, -1), "Vol");
-    s_vol = make_label(scr, &font_text_14, COLOR_DIM, COL_X + 24, 144, 42);
-    lv_obj_set_style_text_align(s_vol, LV_TEXT_ALIGN_RIGHT, 0);
-    make_label(scr, &font_text_14, COLOR_DIM, COL_X + 82, 144, 0);
-    lv_label_set_text(lv_obj_get_child(scr, -1), "Buf");
-    s_buf = make_label(scr, &font_text_14, COLOR_DIM, COL_X + 106, 144, 42);
-    lv_obj_set_style_text_align(s_buf, LV_TEXT_ALIGN_RIGHT, 0);
-    s_wifi = make_label(scr, &font_text_14, COLOR_DIM, COL_X + 164, 144, 0);
-    s_warn = make_label(scr, &font_text_14, COLOR_DIM, COL_X + 188, 144, 0);
-    s_disc_len = make_label(scr, &font_text_14, COLOR_DIM, 0, 144, 0);
-    lv_obj_align(s_disc_len, LV_ALIGN_TOP_RIGHT, -COL_X, 144);
-
+    ui_layout_build(scr);
     lv_timer_create(update_cb, 200, NULL);
 }
 
 esp_err_t ui_init(void)
 {
     load_backlight();
-    ESP_RETURN_ON_ERROR(tdisplay_s3_init(NULL), TAG, "display");
+    lv_display_t *disp = NULL;
+    ESP_RETURN_ON_ERROR(board_display_init(&disp), TAG, "display");
     if (lvgl_port_lock(0)) {
         build_screen();
+#if BOARD_HAS_TOUCH
+        for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in)) {
+            if (lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER) {
+                lv_indev_add_event_cb(in, touch_cb, LV_EVENT_PRESSED, NULL);
+            }
+        }
+#endif
         lvgl_port_unlock();
     }
     return ESP_OK;

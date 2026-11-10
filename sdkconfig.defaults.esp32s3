@@ -1,0 +1,21 @@
+# LilyGO T-Display S3 (ESP32-S3 N16R8: 16 MB quad flash, 8 MB octal PSRAM)
+CONFIG_IDF_TARGET="esp32s3"
+
+# QIO flash + octal PSRAM, as in LilyGO's own "qio_opi" config
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Console on UART0 via external USB-serial adapter (TX = GPIO16, RX = GPIO21; the silkscreen on the board
+# is misleading). The native USB port is used as USB Host for the drive.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_NUM=0
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=16
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=21
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Wi-Fi. Keep the USB PHY enabled when the Wi-Fi PHY initializes: the drive is on the native USB port
+CONFIG_ESP_PHY_ENABLE_USB=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Wi-Fi code in flash instead of IRAM: ~15 KB more internal RAM, slightly lower Wi-Fi throughput
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n

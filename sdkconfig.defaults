@@ -1,25 +1,14 @@
-# This file was generated using idf.py save-defconfig. It can be edited manually.
-# Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
-#
-CONFIG_IDF_TARGET="esp32s3"
+# Settings common to all boards. Target/board specific settings are in sdkconfig.defaults.<target>
+# (applied automatically): esp32s3 = LilyGO T-Display S3, esp32p4 = Guition JC1060P470.
+# The target is chosen by the CMake preset (CMakePresets.json): "idf.py build" = T-Display S3,
+# "idf.py --preset p4 build" = JC1060P470.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
 
-# ESP32-S3 N16R8: 16 MB quad flash, 8 MB octal PSRAM
+# 16 MB flash, QIO. Changing the flash mode needs a cable flash: OTA refuses images with another mode
+# (ESP_ERR_OTA_SPI_MODE_MISMATCH).
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-# QIO flash (T-Display S3: QIO flash + octal PSRAM, as in LilyGO's own "qio_opi" config). Changing the
-# flash mode needs a cable flash: OTA refuses images with another mode (ESP_ERR_OTA_SPI_MODE_MISMATCH).
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
-
-# LilyGO T-Display S3: console on UART0 via external USB-serial adapter
-# (TX = GPIO16, RX = GPIO21; the silkscreen on the board is misleading). The native USB port is used as USB Host for the drive.
-CONFIG_ESP_CONSOLE_UART_CUSTOM=y
-CONFIG_ESP_CONSOLE_UART_NUM=0
-CONFIG_ESP_CONSOLE_UART_TX_GPIO=16
-CONFIG_ESP_CONSOLE_UART_RX_GPIO=21
-CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # LVGL (display UI)
 CONFIG_LV_FONT_MONTSERRAT_14=y
@@ -35,9 +24,6 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # confirms it (done once Wi-Fi is up and the OTA server is reachable, see main/net.c)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
-# Wi-Fi. Keep the USB PHY enabled when the Wi-Fi PHY initializes: the drive is on the native USB port
-CONFIG_ESP_PHY_ENABLE_USB=y
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_MDNS_ENABLE_CONSOLE_CLI=n
 # Larger TCP receive window: faster OTA uploads (buffers can go to PSRAM)
@@ -62,6 +48,3 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 # malloc() of 4 KB or more goes to PSRAM (default 16 KB): LVGL objects, CD-TEXT tables, httpd buffers.
 # Drivers that need DMA or ISR-safe memory request it with heap_caps_*; internal RAM is tight.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
-# Wi-Fi code in flash instead of IRAM: ~15 KB more internal RAM, slightly lower Wi-Fi throughput
-CONFIG_ESP_WIFI_IRAM_OPT=n
-CONFIG_ESP_WIFI_RX_IRAM_OPT=n

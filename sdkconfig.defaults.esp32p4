@@ -1,0 +1,34 @@
+# Guition JC1060P470 (ESP32-P4 rev 1.x, 16 MB flash, 32 MB PSRAM, 7" 1024x600 MIPI-DSI + GT911 touch,
+# ESP32-C6 for Wi-Fi over SDIO, ES8311 codec + speaker amplifier)
+CONFIG_IDF_TARGET="esp32p4"
+
+# The boards seen so far carry pre-production ESP32-P4 chips (rev 1.x); IDF 6 defaults to rev >= 3.0
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# Console on the USB-Serial-JTAG port (the board's "USB1" USB-C, also used for cable flashing). The other
+# USB-C port is the high-speed USB-OTG port, used as USB Host for the drive.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Wi-Fi through the ESP32-C6 (ESP-Hosted over SDIO 4-bit: CLK 18, CMD 19, D0-D3 14-17, C6 reset GPIO54;
+# the defaults of esp_hosted for the ESP32-P4)
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+
+# Large screen layout: bigger fonts
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
+# Own hostname, so it can run next to the T-Display S3 player (http://cdplayer-p4.local/)
+CONFIG_CD_HOSTNAME="cdplayer-p4"
+
+# The board's flash is a BOYA chip (the generic driver works, but logs a warning at boot)
+CONFIG_SPI_FLASH_SUPPORT_BOYA_CHIP=y
+
+# The DPI panel's DMA is restarted from the DSI ISR every frame. Flash writes (OTA, LittleFS cache) disable the
+# cache, and without this the ISR waited for them: the screen flashed during OTA and when album info was saved.
+CONFIG_LCD_DSI_ISR_CACHE_SAFE=y

@@ -5,7 +5,8 @@
  *          exact disc ID isn't in the database). The best release is the one that lists this disc ID,
  *          has front cover art and the same track count.
  * Cover:   https://coverartarchive.org/release/<mbid>/front-250 (or the release group's), a ~250 px
- *          JPEG, redirected to archive.org. Decoded and scaled to META_COVER_SIZE for the display.
+ *          JPEG (front-500 when the screen's cover is larger), redirected to archive.org. Decoded and scaled
+ *          to META_COVER_SIZE for the display.
  * Cache:   /data/meta/<discid>.json (metadata) and <discid>.jpg (cover as downloaded)
  *
  * Everything network/file related runs in the "meta" task. Responses are kept in PSRAM, cJSON allocates
@@ -42,9 +43,14 @@ static const char *TAG = "meta";
 
 #define META_DIR            META_CACHE_DIR
 #define MB_URL_FMT          "https://musicbrainz.org/ws/2/discid/%s?toc=%s&inc=recordings+artist-credits+release-groups&cdstubs=no&fmt=json"
+#if META_COVER_SIZE > 250
+#define CAA_URL_FMT         "https://coverartarchive.org/%s/%s/front-500"
+#else
 #define CAA_URL_FMT         "https://coverartarchive.org/%s/%s/front-250"
+#endif
 #define MB_MAX_BYTES        (1024 * 1024)
 #define COVER_MAX_BYTES     (512 * 1024)
+#define JPEG_WORK_BYTES     (32 * 1024)   /* decoder memory pool (PSRAM) */
 static const int RETRY_DELAY_S[] = {5, 15, 60, 180}; /* after attempt 1, 2, 3, 4; transient failures right after boot are common */
 #define MAX_ATTEMPTS        (int)(sizeof(RETRY_DELAY_S) / sizeof(RETRY_DELAY_S[0]) + 1)
 #define NOT_FOUND_MEMORY    8   /* discs remembered as unknown until reboot, so they aren't looked up on every insert */
@@ -300,10 +306,20 @@ static uint16_t *cover_from_jpeg(const uint8_t *jpg, size_t len)
     const int w = info.width / div, h = info.height / div;
     cfg.outbuf_size = (w + 1) * (h + 1) * 3;
     cfg.outbuf = psram_malloc(cfg.outbuf_size);
+    /* TJpgDec's memory pool: the default 3100 bytes is too small for some covers (front-500 images failed
+     * with JDR_MEM1: bigger Huffman tables / MCUs) */
+    cfg.advanced.working_buffer_size = JPEG_WORK_BYTES;
+    cfg.advanced.working_buffer = psram_malloc(JPEG_WORK_BYTES);
     uint16_t *out = psram_malloc(META_COVER_SIZE * META_COVER_SIZE * 2);
     esp_jpeg_image_output_t img;
-    if (!cfg.outbuf || !out || esp_jpeg_decode(&cfg, &img) != ESP_OK) {
-        ESP_LOGW(TAG, "Cover: decoding %ux%u failed (progressive JPEG?)", info.width, info.height);
+    esp_err_t err = ESP_ERR_NO_MEM;
+    if (cfg.outbuf && cfg.advanced.working_buffer && out) {
+        err = esp_jpeg_decode(&cfg, &img);
+    }
+    free(cfg.advanced.working_buffer);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Cover: decoding %ux%u failed: %s (progressive JPEG?)", info.width, info.height,
+                 esp_err_to_name(err));
         free(cfg.outbuf);
         free(out);
         return NULL;

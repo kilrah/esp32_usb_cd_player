@@ -1,0 +1,23 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "LilyGO T-Display S3 (ESP32-S3)",
+            "binaryDir": "build",
+            "cacheVariables": {
+                "IDF_TARGET": "esp32s3",
+                "SDKCONFIG": "${sourceDir}/sdkconfig"
+            }
+        },
+        {
+            "name": "p4",
+            "displayName": "Guition JC1060P470 (ESP32-P4, 7\" 1024x600 touch)",
+            "binaryDir": "build_p4",
+            "cacheVariables": {
+                "IDF_TARGET": "esp32p4",
+                "SDKCONFIG": "${sourceDir}/sdkconfig.p4"
+            }
+        }
+    ]
+}

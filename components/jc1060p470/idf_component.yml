@@ -1,0 +1,30 @@
+description: Guition JC1060P470 (ESP32-P4) 7" 1024x600 MIPI-DSI display (JD9165) + GT911 touch + LVGL 9, ES8311 codec, ESP32-C6 Wi-Fi (ESP-Hosted)
+# Everything in components/ is seen by the component manager for every target, so the ESP32-P4-only
+# dependencies carry a target rule (otherwise the T-Display S3 build can't resolve them).
+dependencies:
+  idf: ">=6.0"
+  espressif/esp_lvgl_port: "^2.4.0"
+  lvgl/lvgl:
+    version: "^9.2.0"
+    public: true
+  espressif/esp_lcd_jd9165:
+    version: "^2.0.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lcd_touch_gt911:
+    version: "^1.2.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_codec_dev:
+    version: "^1.3.0"
+    rules:
+      - if: "target == esp32p4"
+  # Wi-Fi: the esp_wifi API is forwarded to the ESP32-C6 over SDIO
+  espressif/esp_wifi_remote:
+    version: "^1.6.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_hosted:
+    version: "^3.0.0"
+    rules:
+      - if: "target == esp32p4"
