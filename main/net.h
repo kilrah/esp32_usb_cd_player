@@ -15,6 +15,7 @@
 typedef struct {
     bool configured;   /*!< An SSID is set (NVS, or the Kconfig default) */
     bool connected;    /*!< Associated and has an IP address */
+    char hostname[33]; /*!< DHCP / mDNS name (<hostname>.local) */
     char ssid[33];
     char ip[16];
     bool ap_active;    /*!< Setup access point is on */
@@ -24,6 +25,16 @@ typedef struct {
 
 /** Start Wi-Fi (requires nvs_flash_init()). Connects in the background and reconnects with backoff. */
 esp_err_t net_init(void);
+
+#define NET_HOSTNAME_MAX 32
+
+/**
+ * Set the DHCP / mDNS hostname (stored in NVS, namespace "net"; "" = back to CONFIG_CD_HOSTNAME).
+ * Letters, digits and '-', not at the start or end; stored in lower case. mDNS uses it right away,
+ * the DHCP server sees it at the next lease.
+ * @return ESP_ERR_INVALID_ARG if the name isn't valid
+ */
+esp_err_t net_set_hostname(const char *name);
 
 /** Store new credentials in NVS and reconnect. An empty SSID clears them and disconnects. */
 esp_err_t net_set_credentials(const char *ssid, const char *password);

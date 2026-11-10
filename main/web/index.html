@@ -204,6 +204,11 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
           <input type="password" name="pass" placeholder="Password" maxlength="63">
           <div class="actions"><button type="submit">Save and reconnect</button><span class="msg" id="wifi-msg"></span></div>
         </form>
+        <form id="host-form" autocomplete="off">
+          <label for="hostname">Hostname <small>(http://&lt;name&gt;.local/, empty = default)</small></label>
+          <input type="text" name="name" id="hostname" maxlength="32" pattern="[A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?" spellcheck="false">
+          <div class="actions"><button type="submit">Save</button><span class="msg" id="host-msg"></span></div>
+        </form>
       </section>
 
       <section>
@@ -320,6 +325,10 @@ function render(s) {
   $("w-ssid").textContent = w.ssid || "–";
   $("w-state").textContent = !w.configured ? "Not configured" : w.connected ? "Connected" : "Connecting…";
   $("w-ip").textContent = w.ip ? `${w.ip} (${w.hostname}.local)` : "–";
+  if (document.activeElement !== $("hostname")) {
+    $("hostname").value = w.hostname;
+    $("hostname").placeholder = w.hostname_default;
+  }
   $("w-rssi").textContent = w.connected ? w.rssi + " dBm" : "–";
   $("ap-btn").textContent = w.ap.active ? "Setup AP off" : "Setup AP on";
   $("ap-btn").dataset.on = w.ap.active ? "1" : "";
@@ -552,6 +561,18 @@ $("wifi-form").addEventListener("submit", async e => {
     $("wifi-msg").textContent = (await r.text()).trim();
     e.target.reset();
   } catch (err) { $("wifi-msg").textContent = "Request failed"; }
+});
+
+$("host-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const name = $("hostname").value.trim(), msg = $("host-msg");
+  msg.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/hostname", {method: "POST", body: new URLSearchParams({name}).toString(),
+                                            headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    msg.textContent = (await r.text()).trim();
+    $("hostname").blur();
+  } catch (err) { msg.textContent = "Request failed"; }
 });
 
 $("ota-file").addEventListener("change", e => { $("ota-btn").disabled = !e.target.files.length; });

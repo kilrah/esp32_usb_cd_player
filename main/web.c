@@ -167,7 +167,8 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_printf(w, ",\"wifi\":{\"connected\":%s,\"rssi\":%d", net.connected ? "true" : "false", rssi);
     jw_kv_str(w, "ssid", net.ssid);
     jw_kv_str(w, "ip", net.ip);
-    jw_kv_str(w, "hostname", CONFIG_CD_HOSTNAME);
+    jw_kv_str(w, "hostname", net.hostname);
+    jw_kv_str(w, "hostname_default", CONFIG_CD_HOSTNAME);
     jw_printf(w, ",\"configured\":%s,\"ap\":{\"active\":%s,\"clients\":%d", net.configured ? "true" : "false",
               net.ap_active ? "true" : "false", net.ap_clients);
     jw_kv_str(w, "ssid", net.ap_ssid);
@@ -362,6 +363,32 @@ static esp_err_t wifi_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/** POST /api/hostname, form "name=..": DHCP / mDNS hostname ("" = default) */
+static esp_err_t hostname_handler(httpd_req_t *req)
+{
+    if (!auth_check(req)) {
+        return ESP_OK;
+    }
+    char body[128], name[3 * NET_HOSTNAME_MAX + 1] = "";
+    if (recv_body(req, body, sizeof(body)) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad request");
+    }
+    httpd_query_key_value(body, "name", name, sizeof(name));
+    url_decode(name);
+    esp_err_t err = net_set_hostname(name);
+    if (err == ESP_ERR_INVALID_ARG) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Use up to 32 letters, digits and '-' "
+                                   "(not at the start or end)");
+    } else if (err != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Saving failed");
+    }
+    net_status_t net;
+    net_get_status(&net);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Saved: http://%s.local/\n", net.hostname);
+    return httpd_resp_sendstr(req, msg);
+}
+
 static esp_err_t cover_handler(httpd_req_t *req)
 {
     char path[64];
@@ -523,6 +550,7 @@ esp_err_t web_register(httpd_handle_t server)
         {.uri = "/api/tracks", .method = HTTP_GET, .handler = tracks_handler},
         {.uri = "/api/cmd", .method = HTTP_POST, .handler = cmd_handler},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_handler},
+        {.uri = "/api/hostname", .method = HTTP_POST, .handler = hostname_handler},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_handler},
         {.uri = "/api/admin", .method = HTTP_POST, .handler = admin_handler},
         {.uri = "/api/display", .method = HTTP_POST, .handler = display_handler},

@@ -4,7 +4,8 @@ menu "CD player"
         string "Network hostname"
         default "cdplayer"
         help
-            DHCP and mDNS hostname. The OTA server is reachable as http://<hostname>.local/.
+            Default DHCP and mDNS hostname. The OTA server is reachable as http://<hostname>.local/.
+            It can be changed in the web UI (Settings > Wi-Fi > Hostname, stored in NVS).
 
     config CD_WIFI_SSID
         string "Default Wi-Fi SSID"

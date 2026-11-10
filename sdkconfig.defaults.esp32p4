@@ -23,9 +23,6 @@ CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 
-# Own hostname, so it can run next to the T-Display S3 player (http://cdplayer-p4.local/)
-CONFIG_CD_HOSTNAME="cdplayer-p4"
-
 # The board's flash is a BOYA chip (the generic driver works, but logs a warning at boot)
 CONFIG_SPI_FLASH_SUPPORT_BOYA_CHIP=y
 

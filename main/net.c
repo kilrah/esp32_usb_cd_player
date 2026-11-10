@@ -3,6 +3,8 @@
  *
  * Credentials are stored in NVS (namespace "wifi"), set with the serial command 'W' or the web UI. Without
  * stored credentials, the Kconfig defaults (CONFIG_CD_WIFI_SSID/PASSWORD) are used.
+ * The hostname (DHCP, mDNS <hostname>.local) is CONFIG_CD_HOSTNAME unless one is set in the web UI (NVS
+ * namespace "net", key "hostname"; a separate namespace, since clearing the credentials erases "wifi").
  *
  * Setup access point "CDPlayer-XXXX" (192.168.4.1, WPA2 with CONFIG_CD_AP_PASSWORD): started right away when
  * no network is configured, or AP_START_DELAY_MS after the station lost / failed to get a connection. The
@@ -41,6 +43,7 @@
 static const char *TAG = "net";
 
 #define NVS_NAMESPACE        "wifi"
+#define NVS_NS_NET           "net"   /* hostname */
 #define RECONNECT_MIN_MS     1000
 #define RECONNECT_MAX_MS     30000
 #define AP_START_DELAY_MS    30000  /* configured network not reachable for this long -> setup AP */
@@ -55,6 +58,67 @@ static esp_timer_handle_t s_reconnect_timer, s_ap_start_timer, s_ap_stop_timer;
 static uint32_t s_backoff_ms = RECONNECT_MIN_MS;
 static int64_t s_last_attempt_us;
 static bool s_force_attempt;   /* next attempt ignores the AP-client limit (new credentials) */
+
+/** A valid DNS label: 1..NET_HOSTNAME_MAX letters, digits and '-', not starting or ending with '-' */
+static bool hostname_valid(const char *n)
+{
+    size_t len = strlen(n);
+    if (len == 0 || len > NET_HOSTNAME_MAX || n[0] == '-' || n[len - 1] == '-') {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        char c = n[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void load_hostname(void)
+{
+    char name[NET_HOSTNAME_MAX + 1] = "";
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_NET, NVS_READONLY, &h) == ESP_OK) {
+        size_t len = sizeof(name);
+        if (nvs_get_str(h, "hostname", name, &len) != ESP_OK || !hostname_valid(name)) {
+            name[0] = '\0';
+        }
+        nvs_close(h);
+    }
+    strlcpy(s_status.hostname, name[0] ? name : CONFIG_CD_HOSTNAME, sizeof(s_status.hostname));
+}
+
+esp_err_t net_set_hostname(const char *name)
+{
+    if (name[0] && !hostname_valid(name)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char n[NET_HOSTNAME_MAX + 1];
+    strlcpy(n, name[0] ? name : CONFIG_CD_HOSTNAME, sizeof(n));
+    for (char *c = n; *c; c++) {
+        *c = (*c >= 'A' && *c <= 'Z') ? (char)(*c - 'A' + 'a') : *c; /* mDNS is case-insensitive anyway */
+    }
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NS_NET, NVS_READWRITE, &h), TAG, "nvs open");
+    esp_err_t err = name[0] ? nvs_set_str(h, "hostname", n) : nvs_erase_key(h, "hostname");
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK; /* already at the default */
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    ESP_RETURN_ON_ERROR(err, TAG, "nvs write");
+
+    portENTER_CRITICAL(&s_lock);
+    strlcpy(s_status.hostname, n, sizeof(s_status.hostname));
+    portEXIT_CRITICAL(&s_lock);
+    esp_netif_set_hostname(s_netif, n); /* sent with the next DHCP request */
+    mdns_hostname_set(n);
+    ESP_LOGI(TAG, "Hostname %s: http://%s.local/", name[0] ? "set" : "back to the default", n);
+    return ESP_OK;
+}
 
 static void load_credentials(wifi_config_t *cfg)
 {
@@ -261,7 +325,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             timer_restart(s_ap_stop_timer, AP_STOP_DELAY_MS);
         }
         ESP_LOGI(TAG, "Connected to \"%s\", IP %s, http://%s.local/", s_status.ssid, s_status.ip,
-                 CONFIG_CD_HOSTNAME);
+                 s_status.hostname);
         if (ota_server_start() == ESP_OK) {
             ota_confirm_running_app("OTA server reachable");
         }
@@ -282,7 +346,7 @@ static void start_mdns(void)
 {
     esp_err_t err = mdns_init();
     if (err == ESP_OK) {
-        mdns_hostname_set(CONFIG_CD_HOSTNAME);
+        mdns_hostname_set(s_status.hostname);
         mdns_instance_name_set("USB CD player");
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     } else {
@@ -296,7 +360,8 @@ esp_err_t net_init(void)
     esp_err_t err = esp_event_loop_create_default();
     ESP_RETURN_ON_FALSE(err == ESP_OK || err == ESP_ERR_INVALID_STATE, err, TAG, "event loop");
     s_netif = esp_netif_create_default_wifi_sta();
-    esp_netif_set_hostname(s_netif, CONFIG_CD_HOSTNAME);
+    load_hostname();
+    esp_netif_set_hostname(s_netif, s_status.hostname);
     s_ap_netif = esp_netif_create_default_wifi_ap();
     ap_netif_setup();
 
@@ -428,7 +493,7 @@ void net_print_info(void)
         wifi_ap_record_t ap;
         int rssi = esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
         printf("WIFI connected ssid=\"%s\" ip=%s rssi=%d dBm url=http://%s.local/\n",
-               st.ssid, st.ip, rssi, CONFIG_CD_HOSTNAME);
+               st.ssid, st.ip, rssi, st.hostname);
     } else {
         printf("WIFI connecting ssid=\"%s\"\n", st.ssid);
     }
