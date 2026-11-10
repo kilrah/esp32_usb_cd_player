@@ -107,14 +107,35 @@ static void set_enabled(lv_obj_t *obj, bool on)
 /* Touch actions                                                            */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * A press stays with the widget it started on (LV_OBJ_FLAG_PRESS_LOCK, so sliding onto a neighbour doesn't move
+ * it there), and LVGL then reports a click wherever the finger is lifted. Only act when it's lifted on the widget.
+ */
+static bool released_inside(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) {
+        return true;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    lv_area_t a;
+    lv_obj_get_coords(lv_event_get_current_target(e), &a);
+    return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;
+}
+
 static void cmd_cb(lv_event_t *e)
 {
-    player_command((player_cmd_t)(intptr_t)lv_event_get_user_data(e), 0);
+    if (released_inside(e)) {
+        player_command((player_cmd_t)(intptr_t)lv_event_get_user_data(e), 0);
+    }
 }
 
 static void eject_cb(lv_event_t *e)
 {
-    app_eject_toggle();
+    if (released_inside(e)) {
+        app_eject_toggle();
+    }
 }
 
 /** Volume slider (internal units 0..PLAYER_VOLUME_MAX): applied live while dragging */
@@ -165,17 +186,25 @@ static void list_close(void)
 
 static void list_close_cb(lv_event_t *e)
 {
-    list_close();
+    if (released_inside(e)) {
+        list_close();
+    }
 }
 
 static void list_track_cb(lv_event_t *e)
 {
+    if (!released_inside(e)) {
+        return;
+    }
     player_command(PLAYER_CMD_TRACK, (int)(intptr_t)lv_event_get_user_data(e));
     list_close();
 }
 
 static void list_open_cb(lv_event_t *e)
 {
+    if (!released_inside(e)) {
+        return;
+    }
     player_track_info_t *tracks = malloc(ATAPI_MAX_TRACKS * sizeof(*tracks)); /* ~26 KB, PSRAM */
     if (!tracks) {
         return;
