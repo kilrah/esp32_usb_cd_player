@@ -113,7 +113,8 @@ void ui_layout_update(const player_status_t *st)
 
     net_status_t net;
     net_get_status(&net);
-    if (net.ap_active && !net.connected && st->state != PLAYER_PLAYING && st->state != PLAYER_PAUSED) {
+    if (net.ap_active && !net.connected && !net.eth_connected && st->state != PLAYER_PLAYING &&
+        st->state != PLAYER_PAUSED) {
         /* Setup access point: how to reach the web UI. Network + password and the address alternate every
          * 3 s: together they don't fit the line (220 px next to the cover) and would scroll.
          * Only when idle (stopped or no disc); during playback the line shows the album. */

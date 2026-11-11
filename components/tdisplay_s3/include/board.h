@@ -18,6 +18,7 @@
 #define BOARD_LCD_V_RES       TDS3_LCD_V_RES
 #define BOARD_HAS_DISPLAY     1
 #define BOARD_HAS_TOUCH       0
+#define BOARD_HAS_ETH         0
 #define BOARD_BRIGHTNESS_MAX  TDS3_BRIGHTNESS_MAX
 
 /* PCM5102 wiring (I2S) */

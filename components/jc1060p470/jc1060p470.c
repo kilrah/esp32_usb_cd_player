@@ -22,6 +22,8 @@
 #include "esp_codec_dev_defaults.h"
 #include "es8311_codec.h"
 #include "esp_attr.h"
+#include "esp_eth.h"
+#include <inttypes.h>
 #include "src/display/lv_display_private.h" /* flush_done_cb() */
 
 static const char *TAG = "jc1060p470";
@@ -293,6 +295,58 @@ esp_err_t board_display_init(lv_display_t **disp)
     }
     board_set_brightness(BOARD_BRIGHTNESS_MAX);
     ESP_LOGI(TAG, "Display initialized (%dx%d)", BOARD_LCD_H_RES, BOARD_LCD_V_RES);
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Ethernet: EMAC (RMII) + IP101GR PHY (generic IEEE 802.3 driver)          */
+/* ------------------------------------------------------------------------ */
+
+esp_err_t board_eth_init(esp_eth_handle_t *eth)
+{
+    eth_mac_config_t mac_cfg = ETH_MAC_DEFAULT_CONFIG();
+    eth_esp32_emac_config_t emac_cfg = ETH_ESP32_EMAC_DEFAULT_CONFIG();
+    emac_cfg.interface = EMAC_DATA_INTERFACE_RMII;
+    emac_cfg.smi_gpio.mdc_num = BOARD_PIN_ETH_MDC;
+    emac_cfg.smi_gpio.mdio_num = BOARD_PIN_ETH_MDIO;
+    emac_cfg.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN; /* 50 MHz from the PHY side */
+    emac_cfg.clock_config.rmii.clock_gpio = BOARD_PIN_ETH_REF_CLK;
+    emac_cfg.emac_dataif_gpio.rmii = (eth_mac_rmii_gpio_config_t){
+        .tx_en_num = BOARD_PIN_ETH_TX_EN,
+        .txd0_num = BOARD_PIN_ETH_TXD0,
+        .txd1_num = BOARD_PIN_ETH_TXD1,
+        .crs_dv_num = BOARD_PIN_ETH_CRS_DV,
+        .rxd0_num = BOARD_PIN_ETH_RXD0,
+        .rxd1_num = BOARD_PIN_ETH_RXD1,
+    };
+    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_cfg, &mac_cfg);
+
+    eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
+    phy_cfg.phy_addr = ESP_ETH_PHY_ADDR_AUTO;
+    phy_cfg.reset_gpio_num = BOARD_PIN_ETH_RST;
+    esp_eth_phy_t *phy = esp_eth_phy_new_generic(&phy_cfg);
+
+    esp_err_t err = ESP_FAIL;
+    if (mac && phy) {
+        esp_eth_config_t cfg = ETH_DEFAULT_CONFIG(mac, phy);
+        err = esp_eth_driver_install(&cfg, eth);
+    }
+    if (err != ESP_OK) {
+        if (phy) {
+            phy->del(phy);
+        }
+        if (mac) {
+            mac->del(mac);
+        }
+        ESP_LOGE(TAG, "Ethernet init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    /* PHY ID (registers 2/3: OUI, model, revision): 0243:0c54 = IP101GR on the boards seen so far */
+    uint32_t addr = 0, id1 = 0, id2 = 0;
+    esp_eth_ioctl(*eth, ETH_CMD_G_PHY_ADDR, &addr);
+    esp_eth_ioctl(*eth, ETH_CMD_READ_PHY_REG, &(esp_eth_phy_reg_rw_data_t){.reg_addr = 2, .reg_value_p = &id1});
+    esp_eth_ioctl(*eth, ETH_CMD_READ_PHY_REG, &(esp_eth_phy_reg_rw_data_t){.reg_addr = 3, .reg_value_p = &id2});
+    ESP_LOGI(TAG, "Ethernet PHY at address %"PRIu32", ID %04"PRIx32":%04"PRIx32, addr, id1, id2);
     return ESP_OK;
 }
 

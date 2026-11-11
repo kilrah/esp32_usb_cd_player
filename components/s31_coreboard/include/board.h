@@ -12,12 +12,25 @@
 
 #include "sdkconfig.h"
 #include "esp_err.h"
+#include "esp_eth_driver.h"
 
 #define BOARD_NAME            "ESP32-S31-Function-CoreBoard-1"
 #define BOARD_HAS_DISPLAY     0   /* headless: no UI, LVGL isn't built */
 #define BOARD_HAS_TOUCH       0
+#define BOARD_HAS_ETH         1
 #define BOARD_LCD_H_RES       0
 #define BOARD_LCD_V_RES       0
+
+/* Ethernet: YT8531 gigabit PHY on RGMII (the IDF defaults for the ESP32-S31: ETH_ESP32_EMAC_DEFAULT_CONFIG) */
+#define BOARD_PIN_ETH_MDC     5
+#define BOARD_PIN_ETH_MDIO    6
+#define BOARD_PIN_ETH_RST     7
+#define BOARD_PIN_ETH_TXD0    8   /* TXD0-3 8-11 */
+#define BOARD_PIN_ETH_TX_CTL  12
+#define BOARD_PIN_ETH_TX_CLK  13
+#define BOARD_PIN_ETH_RX_CLK  14
+#define BOARD_PIN_ETH_RX_CTL  15
+#define BOARD_PIN_ETH_RXD3    16  /* RXD3-0 16-19 (reversed) */
 
 #define BOARD_PIN_I2C_SCL     50  /* ES8311 */
 #define BOARD_PIN_I2C_SDA     51
@@ -42,3 +55,6 @@
 /** Called once the I2S clocks run: configures the ES8311 and switches the speaker amplifier on
  *  (PCM5102 output: keeps the amplifier off) */
 esp_err_t board_audio_init(void);
+
+/** Ethernet MAC + PHY: installs the driver (not started) */
+esp_err_t board_eth_init(esp_eth_handle_t *eth);

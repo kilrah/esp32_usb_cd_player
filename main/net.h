@@ -1,5 +1,6 @@
 /*
- * Wi-Fi station + setup access point + mDNS; starts the OTA/web HTTP server (ota.c)
+ * Wi-Fi station + Ethernet (boards with BOARD_HAS_ETH) + setup access point + mDNS; starts the OTA/web HTTP
+ * server (ota.c)
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -21,9 +22,16 @@ typedef struct {
     bool ap_active;    /*!< Setup access point is on */
     char ap_ssid[33];
     int ap_clients;
+    bool eth_present;   /*!< The board has Ethernet and its driver runs */
+    bool eth_link;      /*!< Cable plugged in, link up */
+    bool eth_connected; /*!< Link up and has an IP address */
+    int eth_speed_mbps;
+    bool eth_full_duplex;
+    char eth_ip[16];
 } net_status_t;
 
-/** Start Wi-Fi (requires nvs_flash_init()). Connects in the background and reconnects with backoff. */
+/** Start Wi-Fi and Ethernet, if the board has it (requires nvs_flash_init()). Connects in the background and
+ *  reconnects with backoff. */
 esp_err_t net_init(void);
 
 #define NET_HOSTNAME_MAX 32
@@ -41,7 +49,7 @@ esp_err_t net_set_credentials(const char *ssid, const char *password);
 
 void net_get_status(net_status_t *st);
 
-/** Associated and has an IP address */
+/** Has an IP address on the Wi-Fi station or on Ethernet */
 bool net_is_connected(void);
 
 /** Setup AP password ("" = open network) */

@@ -70,6 +70,16 @@ dependencies:
     - esp32h4
     - linux
     version: 1.6.0
+  espressif/yt8531:
+    component_hash: a2e016544df0567a98c87537abb5ec164e07d4de41a679067ba0f39eadffe903
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=6.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.2.0
   idf:
     source:
       type: idf
@@ -117,6 +127,10 @@ dependencies:
       rules:
       - if: target == esp32s31
       version: ^1.3.0
+    - name: espressif/yt8531
+      rules:
+      - if: target == esp32s31
+      version: ^0.2.0
     source:
       path: components/s31_coreboard
       type: local
@@ -127,11 +141,12 @@ direct_dependencies:
 - espressif/esp_jpeg
 - espressif/esp_lvgl_port
 - espressif/mdns
+- espressif/yt8531
 - idf
 - joltwallet/littlefs
 - kilrah/esp_usb_host_atapi
 - lvgl/lvgl
 - s31_coreboard
-manifest_hash: 71ba067dc75f6b14c5ad769227d240d0053a49daaa6266274986889a45318450
+manifest_hash: de7b239f4b3f2a550f91ddfed352bfec7052abd72fae21b5c7996bca9b7d6e39
 target: esp32s31
 version: 3.0.0

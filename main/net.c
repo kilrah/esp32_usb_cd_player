@@ -14,7 +14,12 @@
  * which disturbs AP clients: while someone is connected to the AP, attempts are limited to one per
  * AP_CLIENT_RETRY_MS (except right after new credentials were saved).
  *
- * The HTTP server (ota.c) starts with the first IP address on either interface.
+ * Ethernet (boards with BOARD_HAS_ETH, driver from board_eth_init()): DHCP, same hostname, preferred over the
+ * station for outgoing traffic (route priority). Both can be connected at once; the web UI answers on both.
+ * The setup AP only comes on while neither has an IP address: without Wi-Fi credentials it waits
+ * ETH_AP_GRACE_MS for Ethernet first, and an Ethernet connection switches it off like a station connection.
+ *
+ * The HTTP server (ota.c) starts with the first IP address on any interface.
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -39,6 +44,10 @@
 #include "net.h"
 #include "ota.h"
 #include "storage.h"
+#include "board.h"
+#if BOARD_HAS_ETH
+#include "esp_eth.h"
+#endif
 
 static const char *TAG = "net";
 
@@ -50,6 +59,8 @@ static const char *TAG = "net";
 #define AP_STOP_DELAY_MS     30000  /* station connected for this long -> setup AP off */
 #define AP_CLIENT_RETRY_MS   60000  /* min. interval of station attempts while the AP has clients */
 #define AP_MAX_CLIENTS       4
+#define ETH_AP_GRACE_MS      10000  /* no Wi-Fi credentials: time Ethernet gets to connect before the setup AP */
+#define ETH_ROUTE_PRIO       150    /* above the Wi-Fi station's 100: Ethernet is the default route */
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static net_status_t s_status;
@@ -58,6 +69,16 @@ static esp_timer_handle_t s_reconnect_timer, s_ap_start_timer, s_ap_stop_timer;
 static uint32_t s_backoff_ms = RECONNECT_MIN_MS;
 static int64_t s_last_attempt_us;
 static bool s_force_attempt;   /* next attempt ignores the AP-client limit (new credentials) */
+#if BOARD_HAS_ETH
+static esp_netif_t *s_eth_netif;
+static esp_eth_handle_t s_eth;
+#endif
+
+/** An IP address on the station or on Ethernet (the setup AP isn't needed) */
+static bool any_connected(void)
+{
+    return s_status.connected || s_status.eth_connected;
+}
 
 /** A valid DNS label: 1..NET_HOSTNAME_MAX letters, digits and '-', not starting or ending with '-' */
 static bool hostname_valid(const char *n)
@@ -115,6 +136,11 @@ esp_err_t net_set_hostname(const char *name)
     strlcpy(s_status.hostname, n, sizeof(s_status.hostname));
     portEXIT_CRITICAL(&s_lock);
     esp_netif_set_hostname(s_netif, n); /* sent with the next DHCP request */
+#if BOARD_HAS_ETH
+    if (s_eth_netif) {
+        esp_netif_set_hostname(s_eth_netif, n);
+    }
+#endif
     mdns_hostname_set(n);
     ESP_LOGI(TAG, "Hostname %s: http://%s.local/", name[0] ? "set" : "back to the default", n);
     return ESP_OK;
@@ -208,10 +234,15 @@ static void ap_stop(void)
 
 static void ap_start_cb(void *arg)
 {
-    if (!s_status.connected) {
-        ESP_LOGW(TAG, "No connection to \"%s\" for %d s", s_status.ssid, AP_START_DELAY_MS / 1000);
-        ap_start();
+    if (any_connected()) {
+        return;
     }
+    if (s_status.configured) {
+        ESP_LOGW(TAG, "No connection to \"%s\"%s", s_status.ssid, s_status.eth_present ? " or Ethernet" : "");
+    } else {
+        ESP_LOGW(TAG, "No Wi-Fi credentials and no Ethernet connection");
+    }
+    ap_start();
 }
 
 static void ap_arm_start_timer(void);
@@ -223,7 +254,7 @@ void net_setup_ap(bool on)
         ap_start();
     } else {
         ap_stop();
-        if (!s_status.connected && s_status.configured) {
+        if (!any_connected() && s_status.configured) {
             ap_arm_start_timer(); /* still no connection: it comes back after the usual delay */
         }
     }
@@ -231,7 +262,7 @@ void net_setup_ap(bool on)
 
 static void ap_stop_cb(void *arg)
 {
-    if (s_status.connected) {
+    if (any_connected()) {
         ap_stop();
     }
 }
@@ -290,7 +321,13 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         } else {
             ESP_LOGW(TAG, "No Wi-Fi credentials; set them in the web UI (setup AP) or with the serial command 'W'");
             ota_confirm_running_app("no Wi-Fi configured");
-            ap_start();
+            if (s_status.eth_present) {
+                if (!any_connected() && !s_status.ap_active) {
+                    timer_restart(s_ap_start_timer, ETH_AP_GRACE_MS); /* unless Ethernet connects first */
+                }
+            } else {
+                ap_start();
+            }
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *ev = data;
@@ -305,7 +342,9 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         if (was_connected) {
             ESP_LOGW(TAG, "Disconnected (reason %d), reconnecting", ev->reason);
             s_backoff_ms = RECONNECT_MIN_MS;
-            esp_timer_stop(s_ap_stop_timer);
+            if (!any_connected()) { /* still on Ethernet: the setup AP may still go off */
+                esp_timer_stop(s_ap_stop_timer);
+            }
         } else {
             ESP_LOGI(TAG, "Connect to \"%s\" failed (reason %d), retry in %"PRIu32" s",
                      s_status.ssid, ev->reason, s_backoff_ms / 1000);
@@ -340,7 +379,73 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         portEXIT_CRITICAL(&s_lock);
         ESP_LOGI(TAG, "Setup AP: client left (%d)", s_status.ap_clients);
     }
+#if BOARD_HAS_ETH
+    else if (base == ETH_EVENT && id == ETHERNET_EVENT_CONNECTED) {
+        eth_speed_t speed = ETH_SPEED_10M;
+        eth_duplex_t duplex = ETH_DUPLEX_HALF;
+        esp_eth_ioctl(s_eth, ETH_CMD_G_SPEED, &speed);
+        esp_eth_ioctl(s_eth, ETH_CMD_G_DUPLEX_MODE, &duplex);
+        portENTER_CRITICAL(&s_lock);
+        s_status.eth_link = true;
+        s_status.eth_speed_mbps = speed == ETH_SPEED_10M ? 10 : speed == ETH_SPEED_100M ? 100 : 1000;
+        s_status.eth_full_duplex = duplex == ETH_DUPLEX_FULL;
+        portEXIT_CRITICAL(&s_lock);
+        ESP_LOGI(TAG, "Ethernet link up, %d Mbps %s duplex", s_status.eth_speed_mbps,
+                 s_status.eth_full_duplex ? "full" : "half");
+    } else if (base == ETH_EVENT && id == ETHERNET_EVENT_DISCONNECTED) {
+        portENTER_CRITICAL(&s_lock);
+        s_status.eth_link = false;
+        s_status.eth_connected = false;
+        s_status.eth_ip[0] = '\0';
+        portEXIT_CRITICAL(&s_lock);
+        ESP_LOGW(TAG, "Ethernet link down");
+        if (!any_connected()) {
+            esp_timer_stop(s_ap_stop_timer);
+            ap_arm_start_timer();
+        }
+    } else if (base == IP_EVENT && id == IP_EVENT_ETH_GOT_IP) {
+        const ip_event_got_ip_t *ev = data;
+        portENTER_CRITICAL(&s_lock);
+        s_status.eth_connected = true;
+        snprintf(s_status.eth_ip, sizeof(s_status.eth_ip), IPSTR, IP2STR(&ev->ip_info.ip));
+        portEXIT_CRITICAL(&s_lock);
+        esp_timer_stop(s_ap_start_timer);
+        if (s_status.ap_active) {
+            timer_restart(s_ap_stop_timer, AP_STOP_DELAY_MS);
+        }
+        ESP_LOGI(TAG, "Ethernet connected, IP %s, http://%s.local/", s_status.eth_ip, s_status.hostname);
+        if (ota_server_start() == ESP_OK) {
+            ota_confirm_running_app("OTA server reachable");
+        }
+    }
+#endif
 }
+
+#if BOARD_HAS_ETH
+/** Ethernet driver (board) + netif with DHCP. Not fatal: Wi-Fi works without it. */
+static void eth_start(void)
+{
+    esp_err_t err = board_eth_init(&s_eth);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet unavailable: %s", esp_err_to_name(err));
+        return;
+    }
+    esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
+    base.route_prio = ETH_ROUTE_PRIO;
+    const esp_netif_config_t cfg = {.base = &base, .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH};
+    s_eth_netif = esp_netif_new(&cfg);
+    esp_netif_set_hostname(s_eth_netif, s_status.hostname);
+    ESP_ERROR_CHECK(esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(s_eth)));
+    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, event_handler, NULL));
+    err = esp_eth_start(s_eth);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet start failed: %s", esp_err_to_name(err));
+        return;
+    }
+    s_status.eth_present = true;
+}
+#endif
 
 static void start_mdns(void)
 {
@@ -378,6 +483,9 @@ esp_err_t net_init(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "storage"); /* credentials live in our own namespace */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, NULL));
+#if BOARD_HAS_ETH
+    eth_start(); /* before the station starts: without Wi-Fi credentials, the setup AP waits for it */
+#endif
 
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
@@ -440,7 +548,7 @@ void net_get_status(net_status_t *st)
 
 bool net_is_connected(void)
 {
-    return s_status.connected;
+    return any_connected();
 }
 
 int net_scan(net_scan_entry_t *out, int max)
@@ -496,6 +604,14 @@ void net_print_info(void)
                st.ssid, st.ip, rssi, st.hostname);
     } else {
         printf("WIFI connecting ssid=\"%s\"\n", st.ssid);
+    }
+    if (st.eth_present) {
+        if (st.eth_connected) {
+            printf("ETH connected ip=%s %d Mbps %s duplex url=http://%s.local/\n", st.eth_ip, st.eth_speed_mbps,
+                   st.eth_full_duplex ? "full" : "half", st.hostname);
+        } else {
+            printf("ETH %s\n", st.eth_link ? "link up, waiting for an address" : "no link");
+        }
     }
     if (st.ap_active) {
         printf("SETUP_AP ssid=\"%s\" password=\"%s\" clients=%d url=http://" NET_AP_IP_STR "/\n", st.ap_ssid,

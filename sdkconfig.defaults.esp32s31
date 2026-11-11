@@ -11,3 +11,7 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
+# Ethernet (YT8531, RGMII): the Tx clock (125/25/2.5 MHz) can't come from the MPLL, which the 200 MHz PSRAM
+# already runs at 400 MHz ("Auto" picks it and the EMAC init fails). The APLL is free: I2S runs from the XTAL.
+CONFIG_ETH_EMAC_RGMII_TX_CLK_SRC_APLL=y

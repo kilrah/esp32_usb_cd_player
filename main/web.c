@@ -177,6 +177,12 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "ssid", net.ap_ssid);
     jw_kv_str(w, "ip", NET_AP_IP_STR);
     jw_raw(w, "}", 1);
+#if BOARD_HAS_ETH /* boards without Ethernet leave "eth" out (the page hides it) */
+    jw_printf(w, "},\"eth\":{\"present\":%s,\"link\":%s,\"connected\":%s,\"speed\":%d,\"full_duplex\":%s",
+              net.eth_present ? "true" : "false", net.eth_link ? "true" : "false",
+              net.eth_connected ? "true" : "false", net.eth_speed_mbps, net.eth_full_duplex ? "true" : "false");
+    jw_kv_str(w, "ip", net.eth_ip);
+#endif
 
     const esp_app_desc_t *app = esp_app_get_description();
     jw_printf(w, "},\"fw\":{\"uptime\":%"PRIu64, (uint64_t)(esp_timer_get_time() / 1000000));

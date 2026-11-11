@@ -53,7 +53,7 @@
 
 static lv_obj_t *s_cover, *s_cover_ph, *s_spinner;
 static lv_obj_t *s_artist, *s_album, *s_title, *s_track, *s_time, *s_total;
-static lv_obj_t *s_seek, *s_buf, *s_wifi, *s_warn, *s_disc_len, *s_vol, *s_vol_slider;
+static lv_obj_t *s_seek, *s_buf, *s_wifi, *s_lan, *s_warn, *s_disc_len, *s_vol, *s_vol_slider;
 static lv_obj_t *s_btn_play, *s_btn_play_lbl, *s_btn_stop, *s_btn_prev, *s_btn_next, *s_btn_list;
 static lv_obj_t *s_list_panel, *s_list;
 static uint32_t s_seek_len;     /* track length (sectors) when the seek slider was grabbed */
@@ -375,7 +375,8 @@ void ui_layout_update(const player_status_t *st)
 
     net_status_t net;
     net_get_status(&net);
-    if (net.ap_active && !net.connected && st->state != PLAYER_PLAYING && st->state != PLAYER_PAUSED) {
+    if (net.ap_active && !net.connected && !net.eth_connected && st->state != PLAYER_PLAYING &&
+        st->state != PLAYER_PAUSED) {
         /* Setup access point: how to reach the web UI (only when idle; during playback the lines show the album) */
         const char *pw = net_ap_password();
         snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI "  Wi-Fi setup: join %s (password: %s)", net.ap_ssid,
@@ -402,6 +403,7 @@ void ui_layout_update(const player_status_t *st)
     snprintf(buf, sizeof(buf), "Buffer %d%%", st->buffer_pct);
     ui_set_text(s_buf, disc ? buf : "");
     ui_set_text(s_wifi, net.connected ? LV_SYMBOL_WIFI : "");
+    ui_set_text(s_lan, net.eth_connected ? "LAN" : ""); /* no Ethernet symbol in LVGL */
     ui_set_text(s_warn, st->read_errors ? LV_SYMBOL_WARNING : "");
 }
 
@@ -470,7 +472,8 @@ void ui_layout_build(lv_obj_t *scr)
     /* Status line */
     s_buf = ui_make_label(scr, &font_text_20, UI_COLOR_DIM, M, STATUS_Y, 150);
     s_wifi = ui_make_label(scr, &font_text_20, UI_COLOR_DIM, M + 160, STATUS_Y, 0);
-    s_warn = ui_make_label(scr, &font_text_20, lv_color_hex(0xe0a020), M + 196, STATUS_Y, 0);
+    s_lan = ui_make_label(scr, &font_text_20, UI_COLOR_DIM, M + 196, STATUS_Y, 0);
+    s_warn = ui_make_label(scr, &font_text_20, lv_color_hex(0xe0a020), M + 250, STATUS_Y, 0);
     s_disc_len = ui_make_label(scr, &font_text_20, UI_COLOR_DIM, 0, STATUS_Y, 0);
     lv_obj_align(s_disc_len, LV_ALIGN_TOP_RIGHT, -M, STATUS_Y);
 

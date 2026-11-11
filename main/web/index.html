@@ -188,6 +188,14 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
         </form>
       </section>
 
+      <section id="eth-card" hidden>
+        <h2>Ethernet</h2>
+        <dl>
+          <dt>Status</dt><dd id="e-state">–</dd>
+          <dt>Address</dt><dd id="e-ip">–</dd>
+        </dl>
+      </section>
+
       <section>
         <h2>Wi-Fi</h2>
         <dl>
@@ -334,9 +342,24 @@ function render(s) {
   $("ap-btn").dataset.on = w.ap.active ? "1" : "";
   $("w-ap").textContent = w.ap.active ? `${w.ap.ssid} on ${w.ap.ip}, ${w.ap.clients} client(s)` : "Off";
 
+  /* Ethernet (boards that have it) */
+  const e = s.eth;
+  $("eth-card").hidden = !e;
+  if (e) {
+    $("e-state").textContent = !e.present ? "Not available (driver failed, see the log)"
+      : e.connected ? `Connected, ${e.speed} Mbps ${e.full_duplex ? "full" : "half"} duplex`
+      : e.link ? "Link up, waiting for an address…" : "No cable / no link";
+    $("e-ip").textContent = e.ip ? `${e.ip} (${w.hostname}.local)` : "–";
+  }
+  const ethUp = !!(e && e.connected);
+
   /* Setup banner when the page is used through the setup access point */
   const banner = $("setup");
-  if (w.ap.active && !w.connected) {
+  if (w.ap.active && ethUp && location.hostname === w.ap.ip) {
+    banner.hidden = false;
+    banner.replaceChildren("Connected by Ethernet. Continue at ", Object.assign(document.createElement("a"),
+      {href: `http://${e.ip}/`, textContent: `http://${e.ip}/`}), ` (${w.hostname}.local). This access point turns off in about 30 s.`);
+  } else if (w.ap.active && !w.connected && !ethUp) {
     banner.hidden = false;
     banner.textContent = w.configured ? `Can't reach "${w.ssid}". Check the Wi-Fi settings below.`
                                       : "Setup: choose the Wi-Fi network for the player below.";
