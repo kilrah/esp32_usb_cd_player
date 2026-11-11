@@ -115,6 +115,8 @@ seen by the component manager for every target, so a board component's target-sp
 
 **The V2 matters:** the JC1060P470 exists in three versions with different hardware. This firmware is written
 for the **-V2**; on the others the display doesn't work (the panel init is for this version's panel).
+All known pins, chips and connectors (also the camera, RTC, RS-485, microSD, battery) are in
+[docs/JC1060P470-V2.md](docs/JC1060P470-V2.md).
 
 ESP32-P4 **rev 1.x** (v1.3, pre-production silicon; `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`), 16 MB flash, 32 MB PSRAM,
 7" 1024x600 MIPI-DSI panel (JD9165) with GT911 touch, ES8311 codec with an NS4150 speaker amplifier, ESP32-C6
@@ -122,7 +124,7 @@ for Wi-Fi (ESP-Hosted over SDIO). Same board as the `p4_edge_enhancer` project; 
 
 | Item | GPIO / detail |
 |---|---|
-| USB Host | The high-speed USB-OTG USB-C port (480 Mbit/s). The drive is plugged in here. Its VBUS comes from the board's 5 V rail (the other USB-C port or the battery booster): a bus-powered drive needs a strong supply there |
+| USB Host | The high-speed USB-OTG USB-C port (480 Mbit/s). The drive is plugged in here. Its VBUS is the board's 5 V input rail (the other USB-C port or CN2; per the schematic not the battery booster): a bus-powered drive needs a strong supply there |
 | Console | The other USB-C port ("USB1", USB-Serial-JTAG; COM13 on this PC), also used for cable flashing. Serial commands work on it as on the T-Display |
 | Audio (default) | **PCM5102 module plugged 1:1 onto the VCC/GND/GPIO1-4 header**: VCC-VCC, GND-GND, GPIO1-LRCK, GPIO2-DIN, GPIO3-BCK, GPIO4-SCK (MCLK). Same module setup as on the T-Display (solder bridges). The speaker amplifier (GPIO11) is held off |
 | Audio (option) | On-board ES8311 (I2C address 0x18): MCLK 13, BCLK 12, WS 10, DOUT 9; amplifier enable GPIO11; speaker connector. **Mono**: left and right are mixed. Select with menuconfig *Board: Guition JC1060P470-V2 > Audio output* (`CONFIG_JC1060P470V2_AUDIO_ES8311`); OTA is enough |
