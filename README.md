@@ -5,7 +5,7 @@ USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/
 
 Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470-V2 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module, and headless (no display) on an Espressif ESP32-S31-Function-CoreBoard-1 (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
 
-Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`. Hostname can be changed in settings.
+Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`. Hostname can be changed in settings. Ethernet is supported on boards that have it, connecting Ethernet disables the AP and the device will be reachable the same way. Both Wi-Fi and Ethernet can be connected simultaneously.
 
 CD-TEXT is displayed if available, and if internet is available disc metadata including cover will be retrieved from MusicBrainz / Cover Art Archive and cached locally in the LittleFS storage partition. 
 A 1.5MB/~8s audio ring buffer is used to cover the case where playback is paused, the drive goes to idle and takes long to spin back up when resuming (more likely than using it while running these days...)
