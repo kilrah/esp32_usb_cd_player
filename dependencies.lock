@@ -75,7 +75,7 @@ dependencies:
       type: service
     version: 1.23.1
   kilrah/esp_usb_host_atapi:
-    component_hash: ab68cf298336833c066a4081628445f89c164fd90a6cdb61cb85d2c9218abf55
+    component_hash: 024269cc4e357c59e4a186d319ce6e7ed3e53b238783c463ded1ea6fed95a52a
     dependencies:
     - name: idf
       version: '>=6.0'
@@ -91,7 +91,7 @@ dependencies:
     - esp32s3
     - esp32p4
     - esp32s31
-    version: dd9f765ce0a05704993d72dd93cc7ccc6117c838
+    version: a14200871fc00638b5f5c99aff640665dc2c1ea9
   lvgl/lvgl:
     component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
     dependencies: []
@@ -122,6 +122,6 @@ direct_dependencies:
 - kilrah/esp_usb_host_atapi
 - lvgl/lvgl
 - tdisplay_s3
-manifest_hash: c38c6c057fb08955604b6a36255abb14bba9b9c72793736b6135cb2c3d2c7bf2
+manifest_hash: 16e9887c4738043727d1dee446b2e8b32b73cbb3f8d23291c389add634c46605
 target: esp32s3
 version: 3.0.0
