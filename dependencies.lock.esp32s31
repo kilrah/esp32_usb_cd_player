@@ -147,6 +147,6 @@ direct_dependencies:
 - kilrah/esp_usb_host_atapi
 - lvgl/lvgl
 - s31_coreboard
-manifest_hash: de7b239f4b3f2a550f91ddfed352bfec7052abd72fae21b5c7996bca9b7d6e39
+manifest_hash: c38c6c057fb08955604b6a36255abb14bba9b9c72793736b6135cb2c3d2c7bf2
 target: esp32s31
 version: 3.0.0

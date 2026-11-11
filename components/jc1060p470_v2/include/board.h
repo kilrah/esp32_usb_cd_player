@@ -1,9 +1,10 @@
 /*
  * Board interface used by the application (every board component provides this header)
  *
- * Guition JC1060P470 (ESP32-P4): 7" 1024x600 MIPI-DSI (JD9165) with GT911 touch, PWM backlight, Ethernet (RMII),
+ * Guition JC1060P470-V2 (ESP32-P4): 7" 1024x600 MIPI-DSI (JD9165) with GT911 touch, PWM backlight, Ethernet (RMII),
  * audio: external PCM5102 on the GPIO1-4 header (default) or the on-board ES8311 + NS4150 speaker amplifier
  * (mono), ESP32-C6 for Wi-Fi (ESP-Hosted over SDIO).
+ * Only the -V2 version: the JC1060P470 exists in three versions, and on the others the display doesn't work.
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -16,7 +17,7 @@
 #include "lvgl.h"
 #include "esp_eth_driver.h"
 
-#define BOARD_NAME            "Guition JC1060P470"
+#define BOARD_NAME            "Guition JC1060P470-V2"
 #define BOARD_LCD_H_RES       1024
 #define BOARD_LCD_V_RES       600
 #define BOARD_HAS_DISPLAY     1
@@ -45,7 +46,7 @@
 
 #define BOARD_PIN_PA_EN       11  /* NS4150 speaker amplifier enable */
 
-#if CONFIG_JC1060_AUDIO_ES8311
+#if CONFIG_JC1060P470V2_AUDIO_ES8311
 /* On-board ES8311 codec (I2S slave, MCLK = 256 fs) and NS4150 speaker amplifier */
 #define BOARD_I2S_MCLK        13
 #define BOARD_I2S_BCLK        12

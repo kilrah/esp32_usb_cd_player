@@ -1,8 +1,8 @@
 /*
- * Large screen layout (1024x600 class, touch: JC1060P470)
+ * Large screen layout (1024x600 class, touch: JC1060P470-V2)
  *
  *  +--------------------------------------------------------------------------------------+
- *  | +-----------+  Artist                                                        [list] |
+ *  | +-----------+  Artist                                               [settings] [list] |
  *  | |           |  Album                                                                |
  *  | |   cover   |  Track title                                                   (40)   |
  *  | |  300x300  |  Track 3 / 11                                                         |
@@ -15,7 +15,8 @@
  *  |                                                                  [======o------]     |
  *  +--------------------------------------------------------------------------------------+
  *
- * [list] opens the track list over the whole screen; tapping a track plays it.
+ * [list] opens the track list over the whole screen; tapping a track plays it. [settings] opens the settings /
+ * status menu (ui_menu.c).
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -107,33 +108,23 @@ static void set_enabled(lv_obj_t *obj, bool on)
 /* Touch actions                                                            */
 /* ------------------------------------------------------------------------ */
 
-/**
- * A press stays with the widget it started on (LV_OBJ_FLAG_PRESS_LOCK, so sliding onto a neighbour doesn't move
- * it there), and LVGL then reports a click wherever the finger is lifted. Only act when it's lifted on the widget.
- */
-static bool released_inside(lv_event_t *e)
-{
-    lv_indev_t *indev = lv_indev_active();
-    if (!indev) {
-        return true;
-    }
-    lv_point_t p;
-    lv_indev_get_point(indev, &p);
-    lv_area_t a;
-    lv_obj_get_coords(lv_event_get_current_target(e), &a);
-    return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;
-}
-
 static void cmd_cb(lv_event_t *e)
 {
-    if (released_inside(e)) {
+    if (ui_released_inside(e)) {
         player_command((player_cmd_t)(intptr_t)lv_event_get_user_data(e), 0);
+    }
+}
+
+static void menu_cb(lv_event_t *e)
+{
+    if (ui_released_inside(e)) {
+        ui_menu_open();
     }
 }
 
 static void eject_cb(lv_event_t *e)
 {
-    if (released_inside(e)) {
+    if (ui_released_inside(e)) {
         app_eject_toggle();
     }
 }
@@ -186,14 +177,14 @@ static void list_close(void)
 
 static void list_close_cb(lv_event_t *e)
 {
-    if (released_inside(e)) {
+    if (ui_released_inside(e)) {
         list_close();
     }
 }
 
 static void list_track_cb(lv_event_t *e)
 {
-    if (!released_inside(e)) {
+    if (!ui_released_inside(e)) {
         return;
     }
     player_command(PLAYER_CMD_TRACK, (int)(intptr_t)lv_event_get_user_data(e));
@@ -202,7 +193,7 @@ static void list_track_cb(lv_event_t *e)
 
 static void list_open_cb(lv_event_t *e)
 {
-    if (!released_inside(e)) {
+    if (!ui_released_inside(e)) {
         return;
     }
     player_track_info_t *tracks = malloc(ATAPI_MAX_TRACKS * sizeof(*tracks)); /* ~26 KB, PSRAM */
@@ -440,7 +431,7 @@ void ui_layout_build(lv_obj_t *scr)
     lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
 
     /* Track info, right of the cover */
-    const int text_w = INFO_W - LIST_BTN - 16;
+    const int text_w = INFO_W - 2 * LIST_BTN - 12 - 16; /* left of the settings and list buttons */
     s_artist = ui_make_label(scr, &font_text_28, UI_COLOR_DIM, INFO_X, COVER_Y + 4, text_w);
     lv_label_set_long_mode(s_artist, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     s_album = ui_make_label(scr, &font_text_28, lv_color_white(), INFO_X, COVER_Y + 46, text_w);
@@ -453,6 +444,8 @@ void ui_layout_build(lv_obj_t *scr)
 
     s_btn_list = make_button(scr, BOARD_LCD_H_RES - M - LIST_BTN, COVER_Y, LIST_BTN, LIST_BTN, LV_SYMBOL_LIST,
                              &font_text_28, list_open_cb, LV_EVENT_CLICKED, NULL, NULL);
+    make_button(scr, BOARD_LCD_H_RES - M - 2 * LIST_BTN - 12, COVER_Y, LIST_BTN, LIST_BTN, LV_SYMBOL_SETTINGS,
+                &font_text_28, menu_cb, LV_EVENT_CLICKED, NULL, NULL);
 
     /* Seek slider: position in the track */
     s_seek = lv_slider_create(scr);

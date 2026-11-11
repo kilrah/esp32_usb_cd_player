@@ -1,4 +1,4 @@
-# Guition JC1060P470 (ESP32-P4 rev 1.x, 16 MB flash, 32 MB PSRAM, 7" 1024x600 MIPI-DSI + GT911 touch,
+# Guition JC1060P470-V2 (ESP32-P4 rev 1.x, 16 MB flash, 32 MB PSRAM, 7" 1024x600 MIPI-DSI + GT911 touch,
 # ESP32-C6 for Wi-Fi over SDIO, ES8311 codec + speaker amplifier)
 CONFIG_IDF_TARGET="esp32p4"
 

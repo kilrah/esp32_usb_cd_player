@@ -1,20 +1,20 @@
-menu "Board: Guition JC1060P470"
+menu "Board: Guition JC1060P470-V2"
     depends on IDF_TARGET_ESP32P4
 
-    choice JC1060_AUDIO_OUT
+    choice JC1060P470V2_AUDIO_OUT
         prompt "Audio output"
-        default JC1060_AUDIO_PCM5102
+        default JC1060P470V2_AUDIO_PCM5102
         help
             Where the I2S audio goes.
 
-        config JC1060_AUDIO_PCM5102
+        config JC1060P470V2_AUDIO_PCM5102
             bool "External PCM5102 DAC on the GPIO1-4 header (stereo)"
             help
                 A PCM5102 module plugged straight onto the board's VCC/GND/GPIO1-4 header:
                 VCC-VCC, GND-GND, GPIO1-LRCK, GPIO2-DIN, GPIO3-BCK, GPIO4-SCK (MCLK).
                 The on-board speaker amplifier is kept off.
 
-        config JC1060_AUDIO_ES8311
+        config JC1060P470V2_AUDIO_ES8311
             bool "On-board ES8311 codec + speaker amplifier (mono)"
             help
                 The board's ES8311 and NS4150 driving the speaker connector. The codec has a single DAC,

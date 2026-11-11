@@ -1,5 +1,5 @@
 /*
- * I2S audio output (44.1 kHz, 16-bit stereo): PCM5102 DAC on the T-Display S3, on-board ES8311 on the JC1060P470.
+ * I2S audio output (44.1 kHz, 16-bit stereo): PCM5102 DAC on the T-Display S3, on-board ES8311 on the JC1060P470-V2.
  * Pins and codec setup come from the board component (board.h).
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0

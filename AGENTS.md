@@ -11,7 +11,7 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
 - **Build environment:** ESP-IDF v6.1 via EIM. In PowerShell, run `. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1`
   first. `C:\esp\v6.1\esp-idf\export.ps1` is broken on this machine.
 - **Boards / presets:** `idf.py build` = T-Display S3 (`default` preset: `build/`, `sdkconfig`), `idf.py --preset p4 build`
-  = Guition JC1060P470 (ESP32-P4: `build_p4/`, `sdkconfig.p4`, `dependencies.lock.esp32p4`), `idf.py --preset s31 build`
+  = Guition JC1060P470-V2 (always write the -V2: there are three versions and the display only works on V2; ESP32-P4: `build_p4/`, `sdkconfig.p4`, `dependencies.lock.esp32p4`), `idf.py --preset s31 build`
   = ESP32-S31-Function-CoreBoard-1 (preview target; `build_s31/`, `sdkconfig.s31`, `dependencies.lock.esp32s31`; no
   display: `BOARD_HAS_DISPLAY 0` builds `main` without the UI and LVGL; ES8311 default, PCM5102 on GPIO25/23/21/35 as
   a Kconfig option; console on UART0 through the on-board USB-UART bridge, COM29; see the README). The S31's
@@ -25,7 +25,7 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
   its USB-Serial-JTAG port, COM13; an RTS pulse didn't reset it, `api/reboot` does and the port survives the reboot; PCM5102 on GPIO1-4 by default, on-board mono ES8311 as a
   Kconfig option; Wi-Fi via the C6) are in the README. Every player defaults to `cdplayer.local`; the hostname
   is a web UI setting (`api/hostname`), so with two players online, use the IP or give one another name. Its DSI ISR must stay cache-safe (screen
-  flashed during flash writes), which needs the IRAM flush callback in `jc1060p470.c`.
+  flashed during flash writes), which needs the IRAM flush callback in `jc1060p470_v2.c`.
 - **Board: LilyGO T-Display S3** (non-touch). The optical drive is on the native USB port (USB Host). The PCM5102 is on
   GPIO43/44/18/17. The pinout is in the README; check it for conflicts before assigning new pins (the LCD uses many).
   - **Console:** external FTDI on **COM23** (board TX = GPIO16, RX = GPIO21). The FTDI has no DTR/RTS wiring, so the agent

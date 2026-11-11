@@ -12,7 +12,7 @@
         },
         {
             "name": "p4",
-            "displayName": "Guition JC1060P470 (ESP32-P4, 7\" 1024x600 touch)",
+            "displayName": "Guition JC1060P470-V2 (ESP32-P4, 7\" 1024x600 touch)",
             "binaryDir": "build_p4",
             "cacheVariables": {
                 "IDF_TARGET": "esp32p4",

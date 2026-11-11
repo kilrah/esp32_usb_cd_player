@@ -1,7 +1,7 @@
 # Settings common to all boards. Target/board specific settings are in sdkconfig.defaults.<target>
-# (applied automatically): esp32s3 = LilyGO T-Display S3, esp32p4 = Guition JC1060P470.
+# (applied automatically): esp32s3 = LilyGO T-Display S3, esp32p4 = Guition JC1060P470-V2.
 # The target is chosen by the CMake preset (CMakePresets.json): "idf.py build" = T-Display S3,
-# "idf.py --preset p4 build" = JC1060P470.
+# "idf.py --preset p4 build" = JC1060P470-V2.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
 
 # 16 MB flash, QIO. Changing the flash mode needs a cable flash: OTA refuses images with another mode

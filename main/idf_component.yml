@@ -11,8 +11,8 @@ dependencies:
     path: ../components/tdisplay_s3
     rules:
       - if: "target == esp32s3"
-  jc1060p470:
-    path: ../components/jc1060p470
+  jc1060p470_v2:
+    path: ../components/jc1060p470_v2
     rules:
       - if: "target == esp32p4"
   s31_coreboard:

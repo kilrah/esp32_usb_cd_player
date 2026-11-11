@@ -1,5 +1,5 @@
 /*
- * Guition JC1060P470 (ESP32-P4): display (MIPI-DSI, JD9165) + LVGL 9, GT911 touch, backlight, ES8311 codec
+ * Guition JC1060P470-V2 (ESP32-P4): display (MIPI-DSI, JD9165) + LVGL 9, GT911 touch, backlight, ES8311 codec
  *
  * Panel init sequence and timings from the board vendor's demo (as used in the p4_edge_enhancer project).
  *
@@ -26,7 +26,7 @@
 #include <inttypes.h>
 #include "src/display/lv_display_private.h" /* flush_done_cb() */
 
-static const char *TAG = "jc1060p470";
+static const char *TAG = "jc1060p470_v2";
 
 #define MIPI_PHY_LDO_CHAN     3
 #define MIPI_PHY_LDO_MV       2500
@@ -356,7 +356,7 @@ esp_err_t board_eth_init(esp_eth_handle_t *eth)
 
 esp_err_t board_audio_init(void)
 {
-#if !CONFIG_JC1060_AUDIO_ES8311
+#if !CONFIG_JC1060P470V2_AUDIO_ES8311
     /* PCM5102 on the header: nothing to set up. Keep the speaker amplifier off (no input, it would only hiss). */
     const gpio_config_t pa = {.mode = GPIO_MODE_OUTPUT, .pin_bit_mask = BIT64(BOARD_PIN_PA_EN)};
     gpio_config(&pa);

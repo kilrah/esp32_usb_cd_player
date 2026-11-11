@@ -1,4 +1,4 @@
-description: Guition JC1060P470 (ESP32-P4) 7" 1024x600 MIPI-DSI display (JD9165) + GT911 touch + LVGL 9, ES8311 codec, ESP32-C6 Wi-Fi (ESP-Hosted)
+description: Guition JC1060P470-V2 (ESP32-P4) 7" 1024x600 MIPI-DSI display (JD9165) + GT911 touch + LVGL 9, ES8311 codec, ESP32-C6 Wi-Fi (ESP-Hosted)
 # Everything in components/ is seen by the component manager for every target, so the ESP32-P4-only
 # dependencies carry a target rule (otherwise the T-Display S3 build can't resolve them).
 dependencies:

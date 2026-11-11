@@ -1,6 +1,6 @@
 /*
  * USB CD player: USB optical drive + I2S audio + LVGL display. Boards: LilyGO T-Display S3 (PCM5102 DAC),
- * Guition JC1060P470 (ESP32-P4, 7" touch screen, on-board ES8311). Board specifics live in components/<board>.
+ * Guition JC1060P470-V2 (ESP32-P4, 7" touch screen, on-board ES8311). Board specifics live in components/<board>.
  *
  * - Detects an optical drive on the USB Host port, waits for an audio CD
  * - Reads TOC and CD-TEXT, starts playing (autoplay setting), streams CD-DA to the I2S DAC (player.c)

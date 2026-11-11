@@ -177,6 +177,19 @@ void ui_set_hidden(lv_obj_t *obj, bool hidden)
     }
 }
 
+bool ui_released_inside(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+        return true; /* keypad / encoder: ENTER on the focused widget */
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    lv_area_t a;
+    lv_obj_get_coords(lv_event_get_current_target(e), &a);
+    return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;
+}
+
 bool ui_cover_poll(bool *has_cover)
 {
     bool changed = s_cover_px && meta_get_cover(&s_cover_gen, s_cover_px, &s_has_cover);
@@ -330,6 +343,7 @@ static void update_cb(lv_timer_t *t)
     player_get_status(&st);
     update_backlight(&st);
     ui_layout_update(&st);
+    ui_menu_update();
 }
 
 static void build_screen(void)
@@ -349,6 +363,7 @@ static void build_screen(void)
     s_cover_dsc.data = (const uint8_t *)s_cover_px;
 
     ui_layout_build(scr);
+    ui_menu_build(scr); /* on top of the layout */
     lv_timer_create(update_cb, 200, NULL);
 }
 

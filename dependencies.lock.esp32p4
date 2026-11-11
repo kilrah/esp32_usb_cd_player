@@ -205,7 +205,7 @@ dependencies:
     source:
       type: idf
     version: 6.1.0
-  jc1060p470:
+  jc1060p470_v2:
     dependencies:
     - name: idf
       version: '>=6.0'
@@ -235,7 +235,7 @@ dependencies:
       - if: target == esp32p4
       version: ^3.0.0
     source:
-      path: components/jc1060p470
+      path: components/jc1060p470_v2
       type: local
     version: '*'
   joltwallet/littlefs:
@@ -284,10 +284,10 @@ direct_dependencies:
 - espressif/esp_wifi_remote
 - espressif/mdns
 - idf
-- jc1060p470
+- jc1060p470_v2
 - joltwallet/littlefs
 - kilrah/esp_usb_host_atapi
 - lvgl/lvgl
-manifest_hash: de7b239f4b3f2a550f91ddfed352bfec7052abd72fae21b5c7996bca9b7d6e39
+manifest_hash: 4622d4c1bc34cf6318ffebdf2ad7cb5b08945e8ce52ddcbfa9a577259886cf97
 target: esp32p4
 version: 3.0.0

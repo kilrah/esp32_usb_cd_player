@@ -47,6 +47,27 @@ lv_obj_t *ui_make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t colo
 void ui_set_hidden(lv_obj_t *obj, bool hidden);
 
 /**
+ * For click handlers: a press stays with the widget it started on (LV_OBJ_FLAG_PRESS_LOCK, so sliding onto a
+ * neighbour doesn't move it there), and LVGL then reports a click wherever the finger is lifted. True only if it
+ * was lifted on the widget (always true for keypad / encoder input).
+ */
+bool ui_released_inside(lv_event_t *e);
+
+/* ---- settings / status menu (ui_menu.c) ---- */
+
+/** Create the (hidden) menu over the player screen; call after ui_layout_build() */
+void ui_menu_build(lv_obj_t *scr);
+void ui_menu_open(void);
+void ui_menu_close(void);
+bool ui_menu_is_open(void);
+
+/** Refresh the shown values (every 200 ms, from the UI timer) */
+void ui_menu_update(void);
+
+/** Every menu control is in this group: bind a keypad / encoder input device to it for button navigation */
+lv_group_t *ui_menu_group(void);
+
+/**
  * Cover art (UI_COVER_SIZE² RGB565). Call from ui_layout_update(): returns true when the image changed;
  * @p has_cover tells whether there is one. The descriptor stays the same, only its pixels change.
  */

@@ -3,7 +3,7 @@
  * its board component.
  *
  *  ui_layout_small.c  320x170 class, no touch (T-Display S3)
- *  ui_layout_large.c  1024x600 class, touch transport controls (JC1060P470)
+ *  ui_layout_large.c  1024x600 class, touch transport controls (JC1060P470-V2)
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */

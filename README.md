@@ -51,11 +51,12 @@ the component manager).
 | Setup access point (no / unreachable Wi-Fi network) with captive portal | Working: AP, scan, web UI over the LAN tested; joining the AP from a phone not yet tested |
 | Album info + cover art from MusicBrainz / Cover Art Archive (CD-TEXT discs: cover, text gaps), cached in LittleFS | Working (exact disc ID match, cover on screen and in the web UI, offline from cache) |
 | Display UI (album/artist/title, track, time, progress, state, volume, buffer) | Working |
+| Settings / status menu on the screen (the web UI's settings, Wi-Fi network choice, on-screen keyboard) | Working on the JC1060P470-V2 (touch). Built for the T-Display too (one pane, no text entry), but nothing opens it yet: needs the buttons |
 | Diagnostics (I2S pin frequency check, test tone, slow/failed read logging) | Working |
 | De-emphasis for pre-emphasis tracks | Working: 1st-order IIR, max. 0.07 dB from the analog curve. Tested with serial `E` (forced), no pre-emphasis disc at hand |
 | Non-ASCII text on screen (CD-TEXT, online album info) | Working: Latin-1 + Latin Extended-A + typographic punctuation (generated fonts, `tools/font_conv.ps1`); other scripts show as `?` |
 | Wi-Fi (station, mDNS `cdplayer.local`, hostname settable in the web UI), firmware update over Wi-Fi (OTA) with rollback | Working: ~12 s per update (~120 KiB/s), slots alternate, new image confirms itself. Playback unaffected by Wi-Fi |
-| Ethernet (boards that have it: ESP32-S31-Function-CoreBoard-1, JC1060P470), alongside Wi-Fi | Working: S31 at 1000 Mbps, JC1060P470 at 100 Mbps; DHCP, web UI and OTA over Ethernet, playback unaffected |
+| Ethernet (boards that have it: ESP32-S31-Function-CoreBoard-1, JC1060P470-V2), alongside Wi-Fi | Working: S31 at 1000 Mbps, JC1060P470-V2 at 100 Mbps; DHCP, web UI and OTA over Ethernet, playback unaffected |
 | Partition table: 2 × 2.5 MB OTA app slots + ~10.9 MB LittleFS at `/data` (for cached track lists / covers) | Working (album info cache in `/data/meta`). The app is ~1.6 MB |
 | Power saving: drive spin-down after 2 min without playback; backlight dimming / off (web UI *Settings > Display*) | Working |
 | Admin password for firmware upload and settings (HTTP Basic auth) | Working (optional, off by default) |
@@ -100,7 +101,7 @@ port (+ touch), backlight (0-16), I2S pins and an audio codec hook. A board with
 | Preset | Target | Board | Build dir / sdkconfig | Screen layout |
 |---|---|---|---|---|
 | `default` | esp32s3 | LilyGO T-Display S3 ([components/tdisplay_s3](components/tdisplay_s3)) | `build/`, `sdkconfig` | small (320x170) |
-| `p4` | esp32p4 | Guition JC1060P470 ([components/jc1060p470](components/jc1060p470)) | `build_p4/`, `sdkconfig.p4` | large (1024x600, touch) |
+| `p4` | esp32p4 | Guition JC1060P470-V2 ([components/jc1060p470_v2](components/jc1060p470_v2)) | `build_p4/`, `sdkconfig.p4` | large (1024x600, touch) |
 | `s31` | esp32s31 | ESP32-S31-Function-CoreBoard-1 ([components/s31_coreboard](components/s31_coreboard)) | `build_s31/`, `sdkconfig.s31` | none |
 
 The screen layout is chosen by the display size, not the board ([main/ui_layout.h](main/ui_layout.h)): a new board
@@ -110,7 +111,10 @@ its own component lock file (`dependencies.lock`, `dependencies.lock.esp32p4`, `
 seen by the component manager for every target, so a board component's target-specific dependencies need a
 `rules: - if: "target == ..."` entry.
 
-### Guition JC1060P470 (ESP32-P4)
+### Guition JC1060P470-V2 (ESP32-P4)
+
+**The V2 matters:** the JC1060P470 exists in three versions with different hardware. This firmware is written
+for the **-V2**; on the others the display doesn't work (the panel init is for this version's panel).
 
 ESP32-P4 **rev 1.x** (v1.3, pre-production silicon; `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`), 16 MB flash, 32 MB PSRAM,
 7" 1024x600 MIPI-DSI panel (JD9165) with GT911 touch, ES8311 codec with an NS4150 speaker amplifier, ESP32-C6
@@ -121,7 +125,7 @@ for Wi-Fi (ESP-Hosted over SDIO). Same board as the `p4_edge_enhancer` project; 
 | USB Host | The high-speed USB-OTG USB-C port (480 Mbit/s). The drive is plugged in here. Its VBUS comes from the board's 5 V rail (the other USB-C port or the battery booster): a bus-powered drive needs a strong supply there |
 | Console | The other USB-C port ("USB1", USB-Serial-JTAG; COM13 on this PC), also used for cable flashing. Serial commands work on it as on the T-Display |
 | Audio (default) | **PCM5102 module plugged 1:1 onto the VCC/GND/GPIO1-4 header**: VCC-VCC, GND-GND, GPIO1-LRCK, GPIO2-DIN, GPIO3-BCK, GPIO4-SCK (MCLK). Same module setup as on the T-Display (solder bridges). The speaker amplifier (GPIO11) is held off |
-| Audio (option) | On-board ES8311 (I2C address 0x18): MCLK 13, BCLK 12, WS 10, DOUT 9; amplifier enable GPIO11; speaker connector. **Mono**: left and right are mixed. Select with menuconfig *Board: Guition JC1060P470 > Audio output* (`CONFIG_JC1060_AUDIO_ES8311`); OTA is enough |
+| Audio (option) | On-board ES8311 (I2C address 0x18): MCLK 13, BCLK 12, WS 10, DOUT 9; amplifier enable GPIO11; speaker connector. **Mono**: left and right are mixed. Select with menuconfig *Board: Guition JC1060P470-V2 > Audio output* (`CONFIG_JC1060P470V2_AUDIO_ES8311`); OTA is enough |
 | Display | MIPI-DSI 2 lanes, reset GPIO5, backlight PWM GPIO23 (LEDC, 16 levels, quadratic) |
 | I2C | SDA 7, SCL 8: GT911 touch, ES8311 |
 | Wi-Fi | ESP32-C6 on SDIO slot 1: CLK 18, CMD 19, D0-D3 14-17, C6 reset GPIO54 (esp_hosted defaults for the P4) |
@@ -172,7 +176,7 @@ doesn't exist). Activate the environment with the EIM profile script instead:
 
 ```powershell
 . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
-idf.py build                 # T-Display S3 ("default" preset); --preset p4 for the JC1060P470, --preset s31 for the S31 board
+idf.py build                 # T-Display S3 ("default" preset); --preset p4 for the JC1060P470-V2, --preset s31 for the S31 board
 idf.py -p COM17 flash        # native USB in download mode, see below
 idf.py -p COM23 monitor      # logs + serial commands via the FTDI adapter
 ```
@@ -300,6 +304,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/fonts](main/fonts) | Text fonts for the display (Montserrat 14/20/28/40 px with Latin-1, Latin Extended-A, punctuation and the LVGL symbols), generated by [tools/font_conv.ps1](tools/font_conv.ps1). Fonts a layout doesn't use are dropped by the linker |
 | [main/ui.c](main/ui.c) | Shared screen logic: display init, 200 ms refresh from a `player_get_status()` snapshot (runs in the LVGL task), backlight policy, cover image, text helpers |
 | [main/ui_layout_small.c](main/ui_layout_small.c), [main/ui_layout_large.c](main/ui_layout_large.c) | Screen layouts by display size ([main/ui_layout.h](main/ui_layout.h)): 320x170 class, and 1024x600 class with touch controls |
+| [main/ui_menu.c](main/ui_menu.c) | Settings / status menu: pages of items (info, switch, choice, stepper, action, text) described by tables, drawn for the screen size and input capabilities (see [Settings menu](#settings-menu-on-the-screen)) |
 | [main/net.c](main/net.c) | Wi-Fi station + Ethernet (board driver from `board_eth_init()`, DHCP, route priority above Wi-Fi): credentials from NVS (namespace `wifi`) or Kconfig, reconnect with backoff (1-30 s), no modem sleep, mDNS/DHCP hostname `cdplayer` (`CONFIG_CD_HOSTNAME`) unless one is set in the web UI (NVS namespace `net`, key `hostname`), starts the HTTP server on the first IP address |
 | [main/ota.c](main/ota.c) | HTTP server: `GET /info`, `POST /ota` (streams into the next OTA slot, validates, reboots); confirms a pending-verify firmware |
 | [main/storage.c](main/storage.c) | LittleFS on the `storage` partition at `/data` |
@@ -309,7 +314,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/discid.c](main/discid.c) | MusicBrainz disc ID (SHA-1 + base64 over the TOC; own SHA-1, since mbedTLS 4 doesn't export it) |
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
-| [components/jc1060p470](components/jc1060p470) | JC1060P470: MIPI-DSI (JD9165) + LVGL port, GT911 touch, PWM backlight, ES8311 setup; pulls in ESP-Hosted / esp_wifi_remote for Wi-Fi |
+| [components/jc1060p470_v2](components/jc1060p470_v2) | JC1060P470-V2: MIPI-DSI (JD9165) + LVGL port, GT911 touch, PWM backlight, ES8311 setup; pulls in ESP-Hosted / esp_wifi_remote for Wi-Fi |
 | [components/s31_coreboard](components/s31_coreboard) | ESP32-S31-Function-CoreBoard-1 (no display): ES8311 setup and amplifier |
 
 On disc load and after each spin-up the drive is set to 4x (`SET CD SPEED`) for less noise; the log line `Read speed ...` shows the result and the speed the drive reports. CD audio needs 1x. `SET STREAMING` (the MMC-3 alternative) is implemented but off by default: the TSSTcorp SH-S182M took it as "full speed". For trying other drives: `api/cmd?c=speed&v=<kB/s, 176 = 1x, 0 = max>&m=<1 SET CD SPEED, 2 SET STREAMING, 3 both>`, applied at once, not saved.
@@ -362,7 +367,8 @@ Notes:
 
 ### Controls
 
-The player is controlled through the web UI, serial commands, or the touch screen (JC1060P470). The T-Display's onboard buttons are not used; dedicated
+The player is controlled through the web UI, serial commands, or the touch screen (JC1060P470-V2, including a
+settings menu). The T-Display's onboard buttons are not used; dedicated
 buttons will be added later. An earlier, uncommitted version used the two onboard buttons through the
 `espressif/button` component (click / double click / hold events), which worked well for this.
 
@@ -482,7 +488,7 @@ The cover is only shown when there is one (album info section); the album and ti
 
 ```
 +------------------------------------------------------------------------+
-| +---------+  Artist                                             [list] |
+| +---------+  Artist                                  [settings] [list] |
 | |  cover  |  Album                                                     |
 | | 300x300 |  Track title (40 px, scrolls)                              |
 | |         |  Track 3 / 11                                              |
@@ -495,8 +501,39 @@ The cover is only shown when there is one (album info section); the album and ti
 ```
 
 [list] opens the track list over the whole screen (current track highlighted); tapping a track plays it.
-The volume slider applies while dragging; the percentage above it follows. Buttons that can't act are greyed out. A touch counts as activity for the
-backlight; while it's dimmed or off, the first touch only wakes the screen and doesn't press anything.
+[settings] opens the [settings menu](#settings-menu-on-the-screen). The volume slider applies while dragging; the
+percentage above it follows. Buttons that can't act are greyed out. A touch counts as activity for the backlight
+and brightens a dimmed screen (the touch acts normally); while the backlight is off, the first touch only wakes the
+screen and doesn't press anything. The status line shows a Wi-Fi symbol and "LAN" for the connected interfaces.
+
+### Settings menu on the screen
+
+[main/ui_menu.c](main/ui_menu.c): the web UI's settings and information, on the device.
+
+| Page | Items |
+|---|---|
+| Player | Autoplay |
+| Display | Dimming (never / when idle / always), brightness, dimmed level, dim after, off when idle |
+| Network | Ethernet status / address (boards with Ethernet); Wi-Fi network, status, address, signal; *Choose a network* (scan, then pick: open networks connect right away, secured ones ask for the password); setup access point on/off and its details; hostname |
+| Album info | Source, disc ID, release; *Look up online again*, *Delete the cached info* |
+| Status | Buffer, underruns, read errors, internal RAM, PSRAM, storage, uptime |
+| System | Firmware version, build, partition, last reset, ESP-IDF, board; *Reboot*; web UI admin password (set / remove) |
+
+Values refresh every 200 ms, so changes from the web UI show up. Actions that lose something (reboot, deleting the
+cached info, removing the admin password) ask first. Changes made here aren't protected by the admin password:
+physical access already allows clearing it (serial `P`).
+
+The pages are tables of items (info line, switch, choice, stepper, action, text field) with callbacks into the
+player / network / album info / backlight code; the renderer adapts them to the device:
+
+- **Screen size** (`UI_LAYOUT_LARGE`): 1024x600 shows two panes (pages left, items right) with large touch
+  targets; 320x170 shows one pane (page list, then a page with a back button) in small fonts.
+- **Text input** (`UI_MENU_TEXT_INPUT` = touch screen): the LVGL on-screen keyboard for the hostname, the admin
+  password and a secured network's password. Without it (T-Display), those items are left out; picking an open
+  network still works, a secured one says to use the web UI.
+- **Buttons:** every control is in one `lv_group` (`ui_menu_group()`). For the T-Display, the buttons need a
+  keypad / encoder input device bound to that group (focus moves between controls, ENTER activates) and a way to
+  open the menu.
 
 When there is no disc, the title line shows the drive state: Waiting for drive, Drive found..., Loading...,
 No disc, Tray open, Reading disc..., Cannot read disc, Drive error.
