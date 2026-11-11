@@ -50,9 +50,10 @@ typedef struct {
     player_state_t state;
     int num_tracks;
     int track;               /*!< Current track number, 0 if none */
+    bool has_next;           /*!< An audio track follows the current one (PLAYER_CMD_NEXT does something) */
     uint32_t track_pos;      /*!< Sectors since track start */
     uint32_t track_len;      /*!< Track length in sectors */
-    uint32_t disc_len;       /*!< Total disc length in sectors */
+    uint32_t disc_len;       /*!< Total length of the audio tracks in sectors (no data tracks, no session gaps) */
     int volume;              /*!< Internal 0..PLAYER_VOLUME_MAX; show via player_volume_display() */
     int buffer_pct;          /*!< Read-ahead buffer fill (sectors not yet sent to I2S) */
     uint32_t buffer_ms;      /*!< Read-ahead buffer in milliseconds of audio */

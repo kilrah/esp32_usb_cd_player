@@ -382,7 +382,7 @@ void ui_layout_update(const player_status_t *st)
     set_enabled(s_btn_play, disc);
     set_enabled(s_btn_stop, disc && st->state != PLAYER_STOPPED);
     set_enabled(s_btn_prev, disc);
-    set_enabled(s_btn_next, disc && st->track < st->num_tracks);
+    set_enabled(s_btn_next, disc && st->has_next);
     set_enabled(s_btn_list, disc);
     set_enabled(s_seek, disc && st->state != PLAYER_STOPPED);
 

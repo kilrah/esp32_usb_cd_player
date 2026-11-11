@@ -93,6 +93,10 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
   - Discs with a large CD-TEXT (41-track compilation): every audio read failed with `bulk_xfer: No memory for
     transfer`, then the drive wedged, although ~110 KB of internal RAM was free. The driver's USB buffer grew on demand
     and the heap fragmented around it. Fixed in driver v0.1.1: the 37 KB buffer is allocated once when the drive connects.
+  - Enhanced CD (t.A.T.u., *200 km/h in the Wrong Lane*: 12 audio tracks + data track 13 in session 2): the last
+    audio track was 2:32 too long and its end failed with `Illegal mode for this track`. That's the gap between the
+    sessions (lead-out, lead-in, pregap = 11400 sectors), not hidden data. Fixed in driver v0.1.4: TOC entries have
+    `end_lba` from the full TOC's session lead-out; the player reads up to `end_lba`.
   - Every CSW timed out forever after an error: data toggle desync after CLEAR_FEATURE. This is fixed in
     `clear_halt()`; see the component README.
 - **Test drives** (all behind the JMicron 152d:2338 USB-IDE bridge):

@@ -340,8 +340,9 @@ static void print_toc(const atapi_toc_t *toc, const atapi_cd_text_t *cdt)
     if (upc) {
         printf("UPC/EAN: %s\n", upc);
     }
-    printf("TOC: tracks %d-%d, total %02d:%02d.%02d (%"PRIu32" sectors)%s\n",
-           toc->first_track, toc->last_track, m, s, f, toc->leadout_lba, cdt ? "" : ", no CD-TEXT");
+    printf("TOC: tracks %d-%d, total %02d:%02d.%02d (%"PRIu32" sectors), %d session%s%s\n",
+           toc->first_track, toc->last_track, m, s, f, toc->leadout_lba, toc->num_sessions,
+           toc->num_sessions == 1 ? "" : "s", cdt ? "" : ", no CD-TEXT");
     printf(" #   type   start LBA   length\n");
     for (int i = 0; i < toc->num_tracks; i++) {
         const atapi_toc_entry_t *t = &toc->tracks[i];

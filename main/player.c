@@ -122,29 +122,30 @@ static int first_audio_track(int from_idx)
     return -1;
 }
 
-/** If @p lba is in a data track, move it to the next audio track (or the lead-out) */
+/** If @p lba is in a data track or in the gap between two sessions, move it to the next audio track
+ *  (or the lead-out) */
 static uint32_t skip_data_tracks(uint32_t lba)
 {
     if (lba >= P.toc.leadout_lba) {
         return P.toc.leadout_lba;
     }
     int idx = track_index_for_lba(lba);
-    if (track_is_audio(idx)) {
+    if (track_is_audio(idx) && lba < P.toc.tracks[idx].end_lba) {
         return lba;
     }
     int next = first_audio_track(idx + 1);
     return next >= 0 ? P.toc.tracks[next].lba : P.toc.leadout_lba;
 }
 
-/** End of the contiguous audio area starting at @p lba (next data track or lead-out) */
+/** End of the contiguous audio area containing @p lba: the end of the last audio track before a data track
+ *  or a session gap (an Enhanced CD's audio session ends 2.5 min before its data track) */
 static uint32_t audio_end_from(uint32_t lba)
 {
-    for (int i = track_index_for_lba(lba) + 1; i < P.toc.num_tracks; i++) {
-        if (!track_is_audio(i)) {
-            return P.toc.tracks[i].lba;
-        }
+    int i = track_index_for_lba(lba);
+    while (i + 1 < P.toc.num_tracks && track_is_audio(i + 1) && P.toc.tracks[i].end_lba == P.toc.tracks[i + 1].lba) {
+        i++;
     }
-    return P.toc.leadout_lba;
+    return P.toc.tracks[i].end_lba;
 }
 
 /** Return buffered (stale after a gen change) chunks to the pool (call with lock held) */
@@ -810,9 +811,14 @@ void player_get_status(player_status_t *st)
         const atapi_toc_entry_t *t = &P.toc.tracks[idx];
         st->num_tracks = P.toc.num_tracks;
         st->track = t->number;
+        st->has_next = first_audio_track(idx + 1) >= 0;
         st->track_pos = P.play_lba - t->lba;
         st->track_len = atapi_toc_track_length(&P.toc, idx);
-        st->disc_len = P.toc.leadout_lba;
+        for (int i = 0; i < P.toc.num_tracks; i++) {
+            if (track_is_audio(i)) {
+                st->disc_len += atapi_toc_track_length(&P.toc, i);
+            }
+        }
         st->preemphasis = atapi_toc_entry_has_preemphasis(t);
         st->deemphasis = st->preemphasis || P.force_deemph;
 
