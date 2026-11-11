@@ -1,0 +1,13 @@
+# Espressif ESP32-S31-Function-CoreBoard-1 (ESP32-S31-WROOM-3: 16 MB flash, 16 MB octal PSRAM), no display.
+# ESP32-S31 is a preview target in IDF 6.1. Octal PSRAM at 200 MHz and the 320 MHz CPU are the IDF defaults.
+CONFIG_IDF_TARGET="esp32s31"
+
+# Console on UART0 (GPIO58/59) through the board's USB-UART bridge ("UART" USB-C, auto reset / download).
+# The drive is on the USB-A port (USB 2.0 OTG High-Speed).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Wi-Fi/lwIP buffers in PSRAM, Wi-Fi code in flash: more internal RAM (same as the T-Display S3)
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n

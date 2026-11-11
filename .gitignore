@@ -34,6 +34,8 @@ sdkconfig.old
 sdkconfig
 sdkconfig.p4
 sdkconfig.p4.old
+sdkconfig.s31
+sdkconfig.s31.old
 
 # ESP-IDF dependencies
 # For older versions or manual component management

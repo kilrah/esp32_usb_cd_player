@@ -11,7 +11,13 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
 - **Build environment:** ESP-IDF v6.1 via EIM. In PowerShell, run `. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1`
   first. `C:\esp\v6.1\esp-idf\export.ps1` is broken on this machine.
 - **Boards / presets:** `idf.py build` = T-Display S3 (`default` preset: `build/`, `sdkconfig`), `idf.py --preset p4 build`
-  = Guition JC1060P470 (ESP32-P4: `build_p4/`, `sdkconfig.p4`, `dependencies.lock.esp32p4`). Board code lives in
+  = Guition JC1060P470 (ESP32-P4: `build_p4/`, `sdkconfig.p4`, `dependencies.lock.esp32p4`), `idf.py --preset s31 build`
+  = ESP32-S31-Function-CoreBoard-1 (preview target; `build_s31/`, `sdkconfig.s31`, `dependencies.lock.esp32s31`; no
+  display: `BOARD_HAS_DISPLAY 0` builds `main` without the UI and LVGL; ES8311 default, PCM5102 on GPIO25/23/21/35 as
+  a Kconfig option; console on UART0 through the on-board USB-UART bridge, COM29; see the README). The S31's
+  USB-UART has auto-reset, so the agent can reset it (pulse RTS with DTR low) and cable-flash it without the user.
+  esptool has no stub for the S31 and its ROM can't `erase_flash`: blank regions with `write-flash` of 0xFF files
+  (`nvs` at 0x9000, the first 64 KB of `storage` at 0x520000 is enough for LittleFS to reformat). Board code lives in
   `components/<board>` behind a common `board.h`; screen layouts are picked by resolution (`main/ui_layout.h`), not board.
   Common settings in `sdkconfig.defaults`, board ones in `sdkconfig.defaults.<target>`. P4 board details (console on
   its USB-Serial-JTAG port, COM13; an RTS pulse didn't reset it, `api/reboot` does and the port survives the reboot; PCM5102 on GPIO1-4 by default, on-board mono ES8311 as a

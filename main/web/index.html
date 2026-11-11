@@ -166,7 +166,7 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
         </div>
       </section>
 
-      <section>
+      <section id="display-card">
         <h2>Display</h2>
         <form id="display-form" class="grid2">
           <label for="bl-mode">Dimming</label>
@@ -354,7 +354,8 @@ function render(s) {
   $("f-part").textContent = `${f.partition} (${f.state})`;
   $("f-up").textContent = uptime(f.uptime);
   /* Display settings: fill the form once, then leave it to the user */
-  if (!displayFilled) {
+  $("display-card").hidden = !s.display; /* boards without a display leave it out */
+  if (!displayFilled && s.display) {
     displayFilled = true;
     const d = s.display;
     $("bl-mode").value = d.mode;

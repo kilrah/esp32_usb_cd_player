@@ -26,7 +26,10 @@
 #include "storage.h"
 #include "app.h"
 #include "auth.h"
+#include "board.h"
+#if BOARD_HAS_DISPLAY
 #include "ui.h"
+#endif
 #include "lwip/sockets.h"
 #include "esp_netif.h"
 #include "meta.h"
@@ -202,11 +205,13 @@ static esp_err_t send_status(httpd_req_t *req)
     jw_kv_str(w, "release", mi.release);
     jw_kv_str(w, "error", mi.error);
 
+#if BOARD_HAS_DISPLAY /* without a display, "display" is left out (the page hides its settings) */
     ui_backlight_cfg_t bl;
     ui_get_backlight(&bl);
     jw_printf(w, "},\"display\":{\"on\":%d,\"dim\":%d,\"dim_delay\":%d,\"off_delay\":%d", bl.on_level,
               bl.dim_level, bl.dim_delay_s, bl.off_delay_s);
     jw_kv_str(w, "mode", ui_dim_mode_name(bl.mode));
+#endif
 
     jw_printf(w, "},\"sys\":{\"heap_internal\":%u,\"heap_internal_min\":%u,\"heap_psram\":%u,"
               "\"fs_used\":%u,\"fs_total\":%u}}",
@@ -503,6 +508,9 @@ static esp_err_t admin_handler(httpd_req_t *req)
 /** Backlight settings; fields left out keep their value */
 static esp_err_t display_handler(httpd_req_t *req)
 {
+#if !BOARD_HAS_DISPLAY
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "This board has no display");
+#else
     char body[160], v[16];
     if (recv_body(req, body, sizeof(body)) != ESP_OK) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad request");
@@ -528,6 +536,7 @@ static esp_err_t display_handler(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Applied, but saving failed");
     }
     return send_status(req);
+#endif
 }
 
 static esp_err_t reboot_handler(httpd_req_t *req)

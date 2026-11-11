@@ -1,0 +1,23 @@
+menu "Board: ESP32-S31-Function-CoreBoard-1"
+    depends on IDF_TARGET_ESP32S31
+
+    choice S31CB_AUDIO_OUT
+        prompt "Audio output"
+        default S31CB_AUDIO_ES8311
+        help
+            Where the I2S audio goes.
+
+        config S31CB_AUDIO_ES8311
+            bool "On-board ES8311 codec + speaker amplifier (mono)"
+            help
+                The board's ES8311 and NS4150B driving the speaker connector. The codec has a single DAC,
+                so left and right are mixed.
+
+        config S31CB_AUDIO_PCM5102
+            bool "External PCM5102 DAC on the J2 header (stereo)"
+            help
+                A PCM5102 module wired straight to the header: VCC, GND, GPIO25-LRCK, GPIO23-DIN,
+                GPIO21-BCK, GPIO35-SCK (MCLK). The on-board speaker amplifier is kept off.
+    endchoice
+
+endmenu

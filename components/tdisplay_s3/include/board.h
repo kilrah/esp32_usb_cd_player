@@ -16,6 +16,7 @@
 #define BOARD_NAME            "LilyGO T-Display S3"
 #define BOARD_LCD_H_RES       TDS3_LCD_H_RES
 #define BOARD_LCD_V_RES       TDS3_LCD_V_RES
+#define BOARD_HAS_DISPLAY     1
 #define BOARD_HAS_TOUCH       0
 #define BOARD_BRIGHTNESS_MAX  TDS3_BRIGHTNESS_MAX
 

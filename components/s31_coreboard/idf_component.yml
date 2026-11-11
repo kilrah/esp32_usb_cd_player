@@ -1,0 +1,9 @@
+description: Espressif ESP32-S31-Function-CoreBoard-1 (no display), ES8311 codec + NS4150B speaker amplifier
+# Everything in components/ is seen by the component manager for every target, so the ESP32-S31-only
+# dependency carries a target rule.
+dependencies:
+  idf: ">=6.1"
+  espressif/esp_codec_dev:
+    version: "^1.3.0"
+    rules:
+      - if: "target == esp32s31"

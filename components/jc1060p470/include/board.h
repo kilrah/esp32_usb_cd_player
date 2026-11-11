@@ -18,6 +18,7 @@
 #define BOARD_NAME            "Guition JC1060P470"
 #define BOARD_LCD_H_RES       1024
 #define BOARD_LCD_V_RES       600
+#define BOARD_HAS_DISPLAY     1
 #define BOARD_HAS_TOUCH       1
 #define BOARD_BRIGHTNESS_MAX  16  /* same scale as the T-Display S3; mapped to PWM duty */
 

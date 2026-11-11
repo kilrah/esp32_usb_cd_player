@@ -18,6 +18,15 @@
                 "IDF_TARGET": "esp32p4",
                 "SDKCONFIG": "${sourceDir}/sdkconfig.p4"
             }
+        },
+        {
+            "name": "s31",
+            "displayName": "ESP32-S31-Function-CoreBoard-1 (ESP32-S31, no display)",
+            "binaryDir": "build_s31",
+            "cacheVariables": {
+                "IDF_TARGET": "esp32s31",
+                "SDKCONFIG": "${sourceDir}/sdkconfig.s31"
+            }
         }
     ]
 }

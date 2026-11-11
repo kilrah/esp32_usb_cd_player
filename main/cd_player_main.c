@@ -33,7 +33,10 @@
 #include "usb/atapi_host.h"
 #include "player.h"
 #include "audio_out.h"
+#include "board.h"
+#if BOARD_HAS_DISPLAY
 #include "ui.h"
+#endif
 #include "net.h"
 #include "ota.h"
 #include "storage.h"
@@ -175,8 +178,10 @@ static void console_input_init(void)
 #else
     const uart_port_t port = CONFIG_ESP_CONSOLE_UART_NUM;
     ESP_ERROR_CHECK(uart_driver_install(port, 256, 0, 0, NULL, 0));
+#if CONFIG_ESP_CONSOLE_UART_CUSTOM /* the default console UART keeps the pins the ROM set up */
     uart_set_pin(port, CONFIG_ESP_CONSOLE_UART_TX_GPIO, CONFIG_ESP_CONSOLE_UART_RX_GPIO,
                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+#endif
 #endif
 }
 
@@ -520,7 +525,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(player_init());
     ESP_ERROR_CHECK(meta_init());
+#if BOARD_HAS_DISPLAY
     ESP_ERROR_CHECK(ui_init());
+#endif
     /* After the UI, so the LVGL DMA buffers get internal RAM first. Not fatal: the player works offline */
     auth_init();
     err = net_init();

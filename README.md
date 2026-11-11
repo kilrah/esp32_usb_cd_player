@@ -3,7 +3,7 @@
 An ESP-based standalone audio CD player. It reads audio CDs from a USB optical drive connected to the ESP's USB Host port, plays them through an I2S DAC, shows track info on a display and provides a webui for interaction. Hardware button controls not implemented yet.
 USB ODDs are all either SATA or IDE behind a bridge anyway, so any existing IDE/SATA desktop/laptop drive should work behind an appropriate USB adapter.
 
-Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470-V2 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
+Currently running on a LilyGO T-Display S3 with a PCM5102 DAC. Also runs on a Guition JC1060P470-V2 (ESP32-P4, 7" 1024x600 touch screen) with the same PCM5102 module, and headless (no display) on an Espressif ESP32-S31-Function-CoreBoard-1 (see [Boards](#boards)). It should be portable to any USB Host capable ESP (PSRAM is required, at least 2MB with current build).
 
 Upon install a `CDPlayer-XXXX` access point, password `cdplayer` is opened for interaction/configuration/connecting it to your own network, where it will then be reachable through `http://cdplayer.local`. Hostname can be changed in settings.
 
@@ -91,18 +91,21 @@ The WS2812 status LED code was removed when the display took over status indicat
 ## Boards
 
 Each board has its own component in [components/](components) that provides the same `board.h`: display + LVGL
-port (+ touch), backlight (0-16), I2S pins and an audio codec hook. The board is chosen by the IDF target
+port (+ touch), backlight (0-16), I2S pins and an audio codec hook. A board without a display sets
+`BOARD_HAS_DISPLAY 0`: `main` is then built without the UI and LVGL (decided by target in
+[main/CMakeLists.txt](main/CMakeLists.txt)), the web status has no `display` object and the page hides its settings. The board is chosen by the IDF target
 (component requirements can't depend on Kconfig), through a CMake preset ([CMakePresets.json](CMakePresets.json)):
 
 | Preset | Target | Board | Build dir / sdkconfig | Screen layout |
 |---|---|---|---|---|
 | `default` | esp32s3 | LilyGO T-Display S3 ([components/tdisplay_s3](components/tdisplay_s3)) | `build/`, `sdkconfig` | small (320x170) |
 | `p4` | esp32p4 | Guition JC1060P470 ([components/jc1060p470](components/jc1060p470)) | `build_p4/`, `sdkconfig.p4` | large (1024x600, touch) |
+| `s31` | esp32s31 | ESP32-S31-Function-CoreBoard-1 ([components/s31_coreboard](components/s31_coreboard)) | `build_s31/`, `sdkconfig.s31` | none |
 
 The screen layout is chosen by the display size, not the board ([main/ui_layout.h](main/ui_layout.h)): a new board
 with a supported resolution only needs its board component. Settings shared by all boards are in
 `sdkconfig.defaults`, board settings in `sdkconfig.defaults.<target>` (applied automatically). Each target has
-its own component lock file (`dependencies.lock`, `dependencies.lock.esp32p4`). Everything in `components/` is
+its own component lock file (`dependencies.lock`, `dependencies.lock.esp32p4`, `dependencies.lock.esp32s31`). Everything in `components/` is
 seen by the component manager for every target, so a board component's target-specific dependencies need a
 `rules: - if: "target == ..."` entry.
 
@@ -133,6 +136,27 @@ idf.py --preset p4 -p COM13 flash monitor
 The C6 must run ESP-Hosted slave firmware compatible with the `esp_hosted` 3.x host. If Wi-Fi doesn't come up,
 check the boot log for the hosted transport/version messages.
 
+### Espressif ESP32-S31-Function-CoreBoard-1 (ESP32-S31)
+
+A platform validation build, not meant for actual use. ESP32-S31-WROOM-3 (16 MB flash, 16 MB octal PSRAM at
+200 MHz, CPU 320 MHz), native Wi-Fi 6, ES8311 codec with an NS4150B speaker amplifier, **no display**: the player
+is driven from the web UI and serial commands. ESP32-S31 is a **preview target** in IDF 6.1. Pins from the
+[schematic](https://dl.espressif.com/schematics/esp32-s31-function-coreboard-1-schematics.pdf).
+
+| Item | GPIO / detail |
+|---|---|
+| USB Host | The USB-A port (USB 2.0 OTG **High-Speed**, UTMI PHY). VBUS through a TPS2051C switch, 500 mA limit: a bus-powered drive may need its own supply |
+| Console | UART0 (GPIO58/59) through the on-board USB-UART bridge (the "UART" USB-C port, auto reset / download). The USB-Serial-JTAG USB-C port also flashes, but carries no console |
+| Audio (default) | On-board ES8311 (I2C address 0x18): MCLK 52, BCLK (SCLK) 53, WS (LRCK) 55, DOUT (DSDIN) 56; amplifier enable GPIO57 (active high); speaker connector. **Mono**: left and right are mixed |
+| Audio (option) | **PCM5102 module wired straight to the J2 header**: VCC, GND, GPIO25-LRCK, GPIO23-DIN, GPIO21-BCK, GPIO35-SCK (MCLK) (J2 pins 31/29/27/25). The amplifier is held off. Select with menuconfig *Board: ESP32-S31-Function-CoreBoard-1 > Audio output* (`CONFIG_S31CB_AUDIO_PCM5102`); OTA is enough |
+| I2C | SCL 50, SDA 51: ES8311 |
+| Other | BOOT button GPIO61, WS2812 LED GPIO60 (both unused); Ethernet PHY (YT8531, RGMII) not used |
+
+```powershell
+idf.py --preset s31 build
+idf.py --preset s31 -p <UART bridge port> flash monitor
+```
+
 ## Building and flashing
 
 Normally: **build and update over Wi-Fi** (see [Firmware update over Wi-Fi](#firmware-update-over-wi-fi-ota)).
@@ -145,7 +169,7 @@ doesn't exist). Activate the environment with the EIM profile script instead:
 
 ```powershell
 . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
-idf.py build                 # T-Display S3 ("default" preset); idf.py --preset p4 build for the JC1060P470
+idf.py build                 # T-Display S3 ("default" preset); --preset p4 for the JC1060P470, --preset s31 for the S31 board
 idf.py -p COM17 flash        # native USB in download mode, see below
 idf.py -p COM23 monitor      # logs + serial commands via the FTDI adapter
 ```
@@ -278,6 +302,7 @@ Dependencies (managed components): `espressif/usb` (USB Host library, external s
 | [main/web.c](main/web.c), [main/web/index.html](main/web/index.html) | Web UI: the page plus a JSON API (`/api/...`) on the OTA HTTP server |
 | [components/tdisplay_s3](components/tdisplay_s3) | ST7789 i80 + LVGL port setup, ported from [hiruna/esp-idf-t-display-s3](https://github.com/hiruna/esp-idf-t-display-s3) (MIT) to IDF 6 |
 | [components/jc1060p470](components/jc1060p470) | JC1060P470: MIPI-DSI (JD9165) + LVGL port, GT911 touch, PWM backlight, ES8311 setup; pulls in ESP-Hosted / esp_wifi_remote for Wi-Fi |
+| [components/s31_coreboard](components/s31_coreboard) | ESP32-S31-Function-CoreBoard-1 (no display): ES8311 setup and amplifier |
 
 On disc load and after each spin-up the drive is set to 4x (`SET CD SPEED`) for less noise; the log line `Read speed ...` shows the result and the speed the drive reports. CD audio needs 1x. `SET STREAMING` (the MMC-3 alternative) is implemented but off by default: the TSSTcorp SH-S182M took it as "full speed". For trying other drives: `api/cmd?c=speed&v=<kB/s, 176 = 1x, 0 = max>&m=<1 SET CD SPEED, 2 SET STREAMING, 3 both>`, applied at once, not saved.
 A disc starts playing as soon as it is loaded, whether inserted or already in the drive at power-up.
