@@ -299,6 +299,11 @@ static esp_err_t cmd_handler(httpd_req_t *req)
             return ESP_OK;
         }
         meta_forget();
+    } else if (!strcmp(c, "meta_forget_all")) {
+        if (!auth_check(req)) {
+            return ESP_OK;
+        }
+        meta_forget_all();
     } else if (!strcmp(c, "speed")) { /* test: v = kB/s (0 = max), m = PLAYER_SPEED_* bits (default 1) */
         char m[8] = "1";
         httpd_query_key_value(query, "m", m, sizeof(m));

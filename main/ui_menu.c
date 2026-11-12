@@ -340,6 +340,14 @@ static bool has_cached(void)
     return m.state == META_FROM_CACHE || m.state == META_FOUND;
 }
 
+/** Storage mounted: entries of other discs can be there even without a disc loaded */
+static bool has_storage(void)
+{
+    size_t total = 0, used = 0;
+    storage_get_info(&total, &used);
+    return total != 0;
+}
+
 static void do_meta_refresh(void)
 {
     meta_refresh();
@@ -352,6 +360,12 @@ static void do_meta_forget(void)
     menu_message("Cached album info deleted", false);
 }
 
+static void do_meta_forget_all(void)
+{
+    meta_forget_all();
+    menu_message("Whole cache deleted", false);
+}
+
 static const mi_t s_album_items[] = {
     {.type = MI_INFO, .label = "Source", .text = txt_meta_src},
     {.type = MI_INFO, .label = "Disc ID", .text = txt_meta_id},
@@ -359,6 +373,9 @@ static const mi_t s_album_items[] = {
     {.type = MI_ACTION, .label = "Look up online again", .action = do_meta_refresh, .visible = has_disc},
     {.type = MI_ACTION, .label = "Delete the cached info", .action = do_meta_forget, .visible = has_cached,
      .confirm = "Delete this disc's cached album info and cover?"},
+    {.type = MI_ACTION, .label = "Delete the whole cache", .action = do_meta_forget_all, .visible = has_storage,
+     .confirm = "Delete the stored album info and covers of ALL discs, not just this one? Export them first in "
+                "the web UI. This cannot be undone."},
 };
 
 /* ---- Status ---- */

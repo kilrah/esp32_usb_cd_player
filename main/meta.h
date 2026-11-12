@@ -53,6 +53,12 @@ void meta_refresh(void);
 /** Delete the current disc's cache entry (the shown data stays until the disc is reloaded) */
 void meta_forget(void);
 
+/**
+ * Delete every stored cache entry, of all discs (the shown data of the current disc stays). Queued to the meta
+ * task, so a lookup that is running finishes first and its entry is deleted too; a pending retry is dropped.
+ */
+void meta_forget_all(void);
+
 /** Cache files were changed from outside (import): load the current disc's entry again, if it has one */
 void meta_reload_cache(void);
 

@@ -132,6 +132,14 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
   underreports: the 37.6 KB USB buffer was allocated fine while it showed 31.7 KB.
 - Metadata test discs: Xandria, *Ravenheart* (no CD-TEXT, Enhanced CD with a data track 13) matches MusicBrainz by
   exact disc ID and has a cover. Cache files are in `/data/meta/`; `M` (or `api/cmd?c=meta`) forces a new lookup.
+  `api/cmd?c=meta_forget` deletes the current disc's entry and `c=meta_forget_all` wipes the whole cache (both need
+  the admin password in the web API, and both are buttons in the web UI and in the on-screen Album info page). The
+  wipe is queued to the meta task, so it can't race a lookup writing files: the status line right after the POST
+  still shows the old storage figure, and a lookup already in flight finishes before its entry is deleted as well.
+  Test the wipe without losing the user's cache: save it first with `GET /api/meta/export` to a tar, wipe, check that
+  export lists 0 files and `/api/status` `sys.fs_used` falls to ~16 KB (empty LittleFS), then restore with
+  `POST /api/meta/import` (`Invoke-WebRequest -InFile`; 21 files/~900 KB took 21 s, and export then lists exactly the
+  same file list). A disc loaded afterwards shows `from cache` again. Never leave the cache empty.
 - The app is ~1.6 MB in a 2.5 MB OTA slot (`partitions.csv`). Don't move `nvs` (settings and Wi-Fi credentials live there).
 - `sdkconfig` is generated: put settings in `sdkconfig.defaults` (target is pinned there), delete `sdkconfig` to regenerate.
 - QIO flash mode is set (since the switch from DIO a cable flash was needed once; OTA refuses flash mode changes).

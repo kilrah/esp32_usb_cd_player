@@ -21,6 +21,7 @@
 #include <inttypes.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -67,6 +68,7 @@ static struct {
     /* jobs */
     bool job_cache;
     bool job_online;
+    bool job_wipe;          /* delete every cache file (asked by meta_forget_all()) */
     bool force;
     int attempts;
     int64_t retry_at;
@@ -566,6 +568,38 @@ static esp_err_t cache_load(const char *discid, player_meta_t **meta, uint16_t *
 /* Task                                                                     */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * Remove every file in the cache directory (only regular files, so any directory that ever appears is kept).
+ * @return the number of files deleted, -1 if the directory can't be opened (storage not mounted)
+ */
+static int wipe_cache_dir(void)
+{
+    DIR *dir = opendir(META_DIR);
+    if (!dir) {
+        return -1;
+    }
+    int deleted = 0;
+    struct dirent *de;
+    char path[sizeof(META_DIR) + 1 + sizeof(de->d_name)];
+    while ((de = readdir(dir))) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) {
+            continue;
+        }
+        snprintf(path, sizeof(path), META_DIR "/%s", de->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+            continue;
+        }
+        if (unlink(path) == 0) {
+            deleted++;
+        } else {
+            ESP_LOGW(TAG, "Cannot delete %s", path);
+        }
+    }
+    closedir(dir);
+    return deleted;
+}
+
 /** Hand results to the player/UI if the disc is still the same (takes ownership of meta and cover) */
 static void apply(const char *discid, player_meta_t *meta, uint16_t *cover, const char *release, meta_state_t state)
 {
@@ -646,7 +680,31 @@ static void meta_task(void *arg)
         int first = M.first_track, num = M.num_tracks;
         bool do_cache = M.job_cache;
         M.job_cache = false;
+        bool do_wipe = M.job_wipe;
+        M.job_wipe = false;
         UNLOCK();
+
+        if (do_wipe) {
+            /* Only this task writes cache files, so doing the deletion here means a lookup that was already
+               running finishes first (and its entry is then deleted too, which is what the user asked for).
+               A queued cache read/lookup for this disc is dropped with it. */
+            int deleted = wipe_cache_dir();
+            LOCK();
+            M.job_cache = M.job_online = M.force = false;
+            M.retry_at = 0;
+            if (M.discid[0]) {
+                M.state = META_IDLE; /* what is on screen stays: only the stored info is gone */
+            }
+            UNLOCK();
+            storage_changed(); /* so the web UI's storage line shows the effect */
+            if (deleted < 0) {
+                ESP_LOGE(TAG, "Cannot open %s: storage not mounted, cache not cleared", META_DIR);
+            } else {
+                ESP_LOGI(TAG, "Cache cleared: %d files deleted from %s", deleted, META_DIR);
+            }
+            continue;
+        }
+
         if (!discid[0]) {
             continue;
         }
@@ -806,6 +864,19 @@ void meta_forget(void)
         storage_changed();
         ESP_LOGI(TAG, "Cache entry deleted: %s", json);
     }
+}
+
+/**
+ * Delete all cache files. Runs in the meta task (it is the only task writing them), so it is queued: a lookup
+ * that is already in flight finishes first, and the entry it just wrote is deleted with the rest.
+ */
+void meta_forget_all(void)
+{
+    LOCK();
+    M.job_wipe = true;
+    M.job_cache = false;
+    UNLOCK();
+    xTaskNotifyGive(M.task);
 }
 
 void meta_reload_cache(void)

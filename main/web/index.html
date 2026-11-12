@@ -257,7 +257,9 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
         </dl>
         <div class="actions" style="margin-top:10px">
           <button type="button" id="meta-btn">Look up online again</button>
-          <span class="msg">MusicBrainz / Cover Art Archive; CD-TEXT takes precedence</span>
+          <button type="button" id="meta-forget">Delete this disc's cache entry</button>
+          <button type="button" id="meta-forget-all">Delete all discs' cache entries</button>
+          <span class="msg" id="meta-action-msg">MusicBrainz / Cover Art Archive; CD-TEXT takes precedence</span>
         </div>
         <form id="meta-import-form" style="margin-top:10px">
           <input type="file" id="meta-file" accept=".tar">
@@ -288,6 +290,8 @@ ul.nets .sub { color: var(--dim); font-size: 13px; }
 const $ = id => document.getElementById(id);
 const ICON_PLAY = "M8 5v14l11-7z", ICON_PAUSE = "M6 19h4V5H6v14zm8-14v14h4V5h-4z";
 let st = null, discKey = "", busy = false, volDragging = false, volTimer = null, setupOpened = false, displayFilled = false;
+let metaMsgShown = "", metaMsgTimer = null;
+const metaMsgDefault = $("meta-action-msg").textContent; /* the album-info buttons report here, then revert */
 
 const mmss = s => (s == null || isNaN(s)) ? "--:--" :
   String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
@@ -411,6 +415,14 @@ function render(s) {
     rel.textContent = "–";
   }
   $("meta-btn").disabled = !disc;
+  /* Deleting only makes sense when the current disc actually has a cache entry (same rule as the on-screen
+     menu: "from cache" or "found online"), and only if the storage is mounted. The on-screen data isn't
+     dropped by the delete, only the cache: it is asked for again on the next lookup. */
+  $("meta-forget").disabled = !(disc && s.sys.fs_total > 0 && (m.state === "from cache" || m.state === "found online"));
+  /* Deleting the whole cache only needs storage: with no disc loaded there can still be entries of other discs.
+     It runs in the meta task, so a running lookup finishes first and its entry is deleted as well. */
+  $("meta-forget-all").disabled = s.sys.fs_total <= 0;
+  $("meta-action-msg").textContent = metaMsgShown || metaMsgDefault;
   const cover = $("cover");
   const coverSrc = m.cover ? "/api/cover?d=" + encodeURIComponent(m.discid + "/" + m.release) : "";
   if (cover.dataset.src !== coverSrc) {
@@ -474,8 +486,20 @@ async function cmd(c, v) {
   } catch (e) { setConn(false, "Offline"); }
 }
 
-document.querySelectorAll(".transport button").forEach(b => b.onclick = () => cmd(b.dataset.cmd, b.dataset.v));
+/**
+ * One-line feedback in the Album info section (it normally explains the import). Shown right away and kept
+ * until @p ms later; render() re-applies it on every poll, so it isn't lost. Pass "" to hide it now.
+ */
+function showMetaMsg(text, ms = 15000) {
+  metaMsgShown = text || "";
+  $("meta-action-msg").textContent = metaMsgShown || metaMsgDefault;
+  clearTimeout(metaMsgTimer);
+  if (text && ms) {
+    metaMsgTimer = setTimeout(() => showMetaMsg(""), ms);
+  }
+}
 
+document.querySelectorAll(".transport button").forEach(b => b.onclick = () => cmd(b.dataset.cmd, b.dataset.v));
 $("bar").addEventListener("click", e => {
   if (!st || st.state === "nodisc" || !st.len) return;
   const r = $("bar").getBoundingClientRect();
@@ -491,13 +515,45 @@ vol.addEventListener("input", () => {
   volTimer = setTimeout(() => { volTimer = null; cmd("volume", vol.value); }, 120);
 });
 
-$("meta-btn").addEventListener("click", () => cmd("meta"));
+$("meta-btn").addEventListener("click", () => {
+  cmd("meta");
+  showMetaMsg("Looking up online…");
+});
+
+$("meta-forget").addEventListener("click", async () => {
+  if (!confirm("Delete this disc's cached album info and cover?")) return;
+  try {
+    const r = await fetch("/api/cmd?c=meta_forget", {method: "POST"});
+    if (r.ok) {
+      render(await r.json());
+      showMetaMsg("Cache entry for this disc deleted (shown info stays until the disc is reloaded)");
+    } else {
+      showMetaMsg((await r.text()).trim() || `Failed (${r.status})`);
+    }
+  } catch (e) { setConn(false, "Offline"); }
+});
+
+$("meta-forget-all").addEventListener("click", async () => {
+  if (!confirm("Delete the stored album info and covers of ALL discs, not just the one loaded?\n" +
+               "Export first if you want to keep them. This cannot be undone.")) return;
+  try {
+    const r = await fetch("/api/cmd?c=meta_forget_all", {method: "POST"});
+    if (r.ok) {
+      render(await r.json());
+      showMetaMsg("Whole cache deleted (the Storage figure in System shows the freed space)");
+    } else {
+      showMetaMsg((await r.text()).trim() || `Failed (${r.status})`);
+    }
+  } catch (e) { setConn(false, "Offline"); }
+});
+
 $("meta-export").addEventListener("click", () => { location.href = "/api/meta/export"; });
 $("meta-file").addEventListener("change", e => { $("meta-import").disabled = !e.target.files.length; });
 $("meta-import-form").addEventListener("submit", e => {
   e.preventDefault();
   const file = $("meta-file").files[0];
   if (!file) return;
+  showMetaMsg(""); /* a delete/lookup message from a minute ago would look unrelated to the upload */
   const prog = $("meta-prog"), msg = $("meta-msg"), btn = $("meta-import");
   btn.disabled = true; prog.hidden = false; prog.value = 0;
   msg.textContent = "Uploading…";

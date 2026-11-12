@@ -12,8 +12,8 @@
  *   POST /api/reboot
  *   POST /api/admin        form body pass=.. : set the admin password (empty = none)
  *   POST /api/display      form body mode=never|idle|always&on=1..16&dim=0..16&dim_delay=s&off_delay=s
- * Firmware upload, Wi-Fi, reboot, admin, and the setup_ap / meta_forget commands need the admin password
- * if one is set (auth.c).
+ * Firmware upload, Wi-Fi, reboot, admin, and the setup_ap / meta_forget / meta_forget_all commands need the
+ * admin password if one is set (auth.c).
  * Firmware upload uses POST /ota (ota.c).
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0

@@ -351,6 +351,14 @@ entry. While a lookup runs, a spinner turns in the cover area, on the display an
 takes about 1 s for MusicBrainz and 5-20 s for the cover (archive.org is slow). It runs in its own task and
 doesn't disturb playback.
 
+**Deleting entries** (web UI and the on-screen menu): *Delete this disc's cache entry* / *Delete the cached info*
+removes only the loaded disc's two files; what is on screen and in the player stays until the disc is reloaded.
+*Delete all discs' cache entries* / *Delete the whole cache* wipes everything in `/data/meta`, so discs that are
+not inserted lose their entries too (export first to keep a copy). The wipe runs in the meta task, the only task
+that writes those files: if a lookup is in flight it finishes first and the entry it just wrote is deleted as
+well, and a queued retry or cache re-read is dropped. Both ask first, and in the web UI both need the admin
+password like the other cache commands.
+
 **Export / import** (web UI, Album info): *Export all* downloads the whole cache as `cdplayer-meta.tar`
 (`meta/<discid>.json` + `.jpg`), generated on the fly. That's about 1.2 MB for 38 discs and takes ~5 s. Windows
 Explorer, 7-Zip and `tar` open it. *Import* takes such a tar: new entries are added, entries for the same disc
@@ -389,6 +397,8 @@ Works on phones. It refreshes once per second.
 - **Settings:** autoplay, Wi-Fi network (save and reconnect), hostname (empty = `cdplayer`; give each player its
   own when several are on the network), firmware info, firmware upload (same as
   `tools/ota.py`; waits for the reboot and reports the running version), reboot, memory and storage use.
+  Album info: *Look up online again*, *Delete this disc's cache entry*, *Delete all discs' cache entries* (the
+  whole `/data/meta` cache; needs the admin password, asks first), export/import (see above).
 
 Player controls need no login; settings and firmware upload need the admin password if one is set (see above).
 The JSON API can also be used by scripts:
@@ -400,7 +410,7 @@ The JSON API can also be used by scripts:
 | `GET /api/meta/export` | Album info cache as a tar archive (see Album info) |
 | `POST /api/meta/import` | Body: a tar archive (raw, e.g. `curl --data-binary @cdplayer-meta.tar`). Returns `{"imported", "unchanged", "skipped", "failed", "error"}`; HTTP 400 if it isn't a valid tar or is cut off (files before that point are kept) |
 | `GET /api/tracks` | `[{"n", "audio", "len", "title", "performer"}, ...]` |
-| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `setup_ap&v=1/0`, `speed&v=<kB/s>&m=<1-3>` (test, see above). Returns the status |
+| `POST /api/cmd?c=<cmd>[&v=<n>]` | `play` (play/pause toggle), `stop`, `next`, `prev`, `skip&v=±s`, `seek&v=<s into track>`, `track&v=<n>`, `volume&v=<0-100>`, `eject`, `autoplay&v=0/1`, `meta` (look up album info again), `meta_forget` (delete the cache entry of the current disc), `meta_forget_all` (delete every stored cache entry), `setup_ap&v=1/0`, `speed&v=<kB/s>&m=<1-3>` (test, see above). Returns the status |
 | `POST /api/wifi` | URL-encoded form `ssid=..&pass=..` (empty SSID clears) |
 | `POST /api/hostname` | URL-encoded form `name=..`: DHCP / mDNS hostname, up to 32 letters, digits and `-` (not first or last), stored in lower case; empty = default. mDNS takes it at once, DHCP at the next lease. HTTP 400 if invalid |
 | `GET /api/wifi/scan` | Nearby networks `[{"ssid", "rssi", "open"}]`, strongest first (takes ~2 s) |
@@ -520,7 +530,7 @@ screen and doesn't press anything. The status line shows a Wi-Fi symbol and "LAN
 | Player | Autoplay |
 | Display | Dimming (never / when idle / always), brightness, dimmed level, dim after, off when idle |
 | Network | Ethernet status / address (boards with Ethernet); Wi-Fi network, status, address, signal; *Choose a network* (scan, then pick: open networks connect right away, secured ones ask for the password); setup access point on/off and its details; hostname |
-| Album info | Source, disc ID, release; *Look up online again*, *Delete the cached info* |
+| Album info | Source, disc ID, release; *Look up online again*, *Delete the cached info*, *Delete the whole cache* |
 | Status | Buffer, underruns, read errors, internal RAM, PSRAM, storage, uptime |
 | System | Firmware version, build, partition, last reset, ESP-IDF, board; *Reboot*; web UI admin password (set / remove) |
 
