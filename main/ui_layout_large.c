@@ -370,8 +370,7 @@ void ui_layout_update(const player_status_t *st)
         st->state != PLAYER_PAUSED) {
         /* Setup access point: how to reach the web UI (only when idle; during playback the lines show the album) */
         const char *pw = net_ap_password();
-        snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI "  Wi-Fi setup: join %s (password: %s)", net.ap_ssid,
-                 pw[0] ? pw : "none");
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s / %s", net.ap_ssid, pw[0] ? pw : "open");
         ui_set_text(s_artist, buf);
         ui_set_text(s_album, "then open http://" NET_AP_IP_STR);
     }
