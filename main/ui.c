@@ -58,14 +58,16 @@ static volatile bool s_touched; /* a touch counts as activity (wakes the backlig
 
 /*
  * The text fonts (main/fonts, generated with lv_font_conv, see font_conv.ps1) contain ASCII, Latin-1 Supplement,
- * Latin Extended-A, common typographic punctuation and the LVGL symbols. Characters outside these would be
- * drawn as nothing, so they are replaced.
+ * Latin Extended-A, the Cyrillic block U+0400-U+04FF, common typographic punctuation and the LVGL symbols.
+ * Characters outside these would be drawn as nothing, so they are replaced.
  */
 static bool in_font(uint32_t cp)
 {
-    return (cp >= 0x20 && cp <= 0x7E) || (cp >= 0xA0 && cp <= 0x17F) || (cp >= 0x2010 && cp <= 0x2015) ||
-           (cp >= 0x2018 && cp <= 0x201E) || (cp >= 0x2020 && cp <= 0x2022) || cp == 0x2026 || cp == 0x2030 ||
-           (cp >= 0x2032 && cp <= 0x2033) || (cp >= 0x2039 && cp <= 0x203A) || cp == 0x20AC || cp == 0x2122 ||
+    return (cp >= 0x20 && cp <= 0x7E) || (cp >= 0xA0 && cp <= 0x17F) || (cp >= 0x400 && cp <= 0x4FF) ||
+           (cp >= 0x2010 && cp <= 0x2015) || (cp >= 0x2018 && cp <= 0x201E) ||
+           (cp >= 0x2020 && cp <= 0x2022) || cp == 0x2026 || cp == 0x2030 ||
+           (cp >= 0x2032 && cp <= 0x2033) || (cp >= 0x2039 && cp <= 0x203A) ||
+           cp == 0x20AC || cp == 0x2122 ||
            (cp >= 0xF000 && cp <= 0xF8FF); /* LV_SYMBOL_* (FontAwesome, private use area) */
 }
 

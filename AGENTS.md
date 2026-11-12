@@ -140,6 +140,20 @@ the [driver README](https://github.com/kilrah/esp_usb_host_atapi#readme) for the
   export lists 0 files and `/api/status` `sys.fs_used` falls to ~16 KB (empty LittleFS), then restore with
   `POST /api/meta/import` (`Invoke-WebRequest -InFile`; 21 files/~900 KB took 21 s, and export then lists exactly the
   same file list). A disc loaded afterwards shows `from cache` again. Never leave the cache empty.
+- **Display fonts:** regenerate with `.\tools\font_conv.ps1` (needs Node/npx) after changing `main/fonts`; the
+  ranges must stay in sync with `in_font()` in `main/ui.c`, which filters what the fonts can draw. They now include
+  the whole Cyrillic block U+0400-U+04FF, which the bundled `Montserrat-Medium.ttf` has in full (its cmap: 96/96 for
+  U+0400-U+045F, and most of U+0490-U+04FF; the historic U+0460-U+048F range has holes). Cost of that block:
+  +86 KB on the S3 build, +157 KB on the P4 build (26 % and 11 % of the OTA slot free afterwards) — the 28 and
+  40 px fonts dominate, and the linker drops fonts a layout doesn't use. Narrowing to `0x400-0x45F` covers
+  Russian/Ukrainian/Belarusian/Serbian/Bulgarian and saves most of it. Greek is impossible with this TTF (4
+  codepoints only); CJK too. Verify a range really draws (not blank) by resolving the codepoints through the
+  generated `cmaps[]`/`glyph_dsc[]`/`glyph_bitmap[]` and checking the bitmap has ink.
+- **CD-TEXT code pages:** the driver (`atapi_cdtext.c`) converts only text data code 0 (ISO-8859-1, with the
+  Windows-1252 0x80-0x9F fix). Other code pages — what a Cyrillic CD-TEXT disc uses — fall through as raw single
+  bytes, so they reach the UI as invalid UTF-8 and still show as `?` even though the fonts now have the glyphs.
+  Fixing it is a change in the driver repo (clone, `override_path`, tag; see above) and needs a disc whose
+  CD-TEXT is actually Cyrillic to test against; MusicBrainz-sourced album info is UTF-8 and works already.
 - The app is ~1.6 MB in a 2.5 MB OTA slot (`partitions.csv`). Don't move `nvs` (settings and Wi-Fi credentials live there).
 - `sdkconfig` is generated: put settings in `sdkconfig.defaults` (target is pinned there), delete `sdkconfig` to regenerate.
 - QIO flash mode is set (since the switch from DIO a cable flash was needed once; OTA refuses flash mode changes).
