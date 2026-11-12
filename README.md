@@ -331,6 +331,9 @@ When a disc is loaded ([main/meta.c](main/meta.c)):
    lead-out moved to its start - 11400, like libdiscid.
 2. The cache is checked: `/data/meta/<discid>.json` (album, artist, track titles/artists, release ID) and
    `<discid>.jpg` (the cover as downloaded). A hit is applied right away, without a network connection.
+   A `.jpg` alone is a hit too (cover only): import one to give a home-made CD-TEXT disc that isn't on
+   MusicBrainz a cover. A cover is always shown when the `.jpg` exists, and a later online lookup without a cover
+   keeps it.
 3. Otherwise, as soon as Wi-Fi is connected: `GET https://musicbrainz.org/ws/2/discid/<id>?toc=...`
    (the TOC enables fuzzy matching if the exact ID isn't known). The chosen release is the one that lists this
    disc ID, has front cover art, and has the same track count. Then the cover:

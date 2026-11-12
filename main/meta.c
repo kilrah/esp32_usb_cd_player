@@ -458,13 +458,10 @@ static void cache_save(const char *discid, const mb_result_t *res, const uint8_t
 {
     char path[64];
     cache_path(path, sizeof(path), discid, "jpg");
-    if (jpg) {
-        if (write_file(path, jpg, jpg_len) != ESP_OK) {
-            ESP_LOGW(TAG, "Writing %s failed", path);
-            jpg = NULL;
-        }
-    } else if (unlink(path) == 0) {
-        storage_changed();
+    /* Without a new cover, an existing .jpg is kept: it may have been added by hand */
+    if (jpg && write_file(path, jpg, jpg_len) != ESP_OK) {
+        ESP_LOGW(TAG, "Writing %s failed", path);
+        jpg = NULL;
     }
 
     const player_meta_t *m = res->meta;
@@ -498,7 +495,25 @@ static void cache_save(const char *discid, const mb_result_t *res, const uint8_t
     free(text);
 }
 
-/** Load a cache entry. @return ESP_ERR_NOT_FOUND if there is none */
+/** Decode the cached cover of @p discid, if there is a usable one */
+static uint16_t *cache_load_cover(const char *discid)
+{
+    char path[64];
+    uint8_t *jpg = NULL;
+    size_t len = 0;
+    uint16_t *cover = NULL;
+    cache_path(path, sizeof(path), discid, "jpg");
+    if (read_file(path, &jpg, &len, COVER_MAX_BYTES) == ESP_OK) {
+        cover = cover_from_jpeg(jpg, len);
+        free(jpg);
+    }
+    return cover;
+}
+
+/**
+ * Load a cache entry. A cover without a .json (e.g. imported for a home-made CD-TEXT disc that isn't online)
+ * counts as an entry too, with @p meta NULL. @return ESP_ERR_NOT_FOUND if there is none
+ */
 static esp_err_t cache_load(const char *discid, player_meta_t **meta, uint16_t **cover, char *release, size_t rel_size)
 {
     char path[64];
@@ -506,6 +521,16 @@ static esp_err_t cache_load(const char *discid, player_meta_t **meta, uint16_t *
     size_t len = 0;
     cache_path(path, sizeof(path), discid, "json");
     esp_err_t err = read_file(path, &text, &len, 256 * 1024);
+    if (err == ESP_ERR_NOT_FOUND) {
+        *cover = cache_load_cover(discid);
+        if (!*cover) {
+            return ESP_ERR_NOT_FOUND;
+        }
+        *meta = NULL;
+        release[0] = '\0';
+        ESP_LOGI(TAG, "From cache: cover only (no metadata)");
+        return ESP_OK;
+    }
     if (err != ESP_OK) {
         return err;
     }
@@ -528,18 +553,10 @@ static esp_err_t cache_load(const char *discid, player_meta_t **meta, uint16_t *
         }
     }
     strlcpy(release, json_str(root, "release") ?: "", rel_size);
-    bool has_cover = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "cover"));
     cJSON_Delete(root);
 
-    *cover = NULL;
-    if (has_cover) {
-        uint8_t *jpg = NULL;
-        cache_path(path, sizeof(path), discid, "jpg");
-        if (read_file(path, &jpg, &len, COVER_MAX_BYTES) == ESP_OK) {
-            *cover = cover_from_jpeg(jpg, len);
-            free(jpg);
-        }
-    }
+    /* The .jpg is used whenever it exists, whatever the .json's "cover" says (it may have been added by hand) */
+    *cover = cache_load_cover(discid);
     *meta = m;
     ESP_LOGI(TAG, "From cache: \"%s\" by \"%s\"%s", m->album, m->artist, *cover ? ", with cover" : "");
     return ESP_OK;

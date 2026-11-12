@@ -2,7 +2,8 @@
  * Album metadata and cover art from MusicBrainz / Cover Art Archive, cached in LittleFS
  *
  * When a disc is loaded, the cache (/data/meta/<discid>.json + .jpg) is checked first. CD-TEXT text wins over
- * the online data, so for CD-TEXT discs this mostly adds the cover.
+ * the online data, so for CD-TEXT discs this mostly adds the cover. A <discid>.jpg without a .json is a cache
+ * entry too (cover only, no online lookup): that's how a home-made CD-TEXT disc gets a cover.
  * Without a cache entry, the disc is looked up online as soon as Wi-Fi is connected. Results are handed
  * to the player (player_set_metadata()) and the cover to the UI.
  *
